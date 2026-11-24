@@ -512,3 +512,28 @@ func Append(c *imapclient.Client, folder string, raw []byte, flags ...imap.Flag)
 	}
 	return uint32(data.UID), nil
 }
+
+// AppendAt кладёт письмо с заданной датой получения и флагами (импорт).
+func AppendAt(c *imapclient.Client, folder string, raw []byte, date time.Time, flags []imap.Flag) error {
+	if date.IsZero() {
+		date = time.Now()
+	}
+	cmd := c.Append(folder, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: date})
+	if _, err := cmd.Write(raw); err != nil {
+		return err
+	}
+	if err := cmd.Close(); err != nil {
+		return err
+	}
+	_, err := cmd.Wait()
+	return err
+}
+
+// HasMessageID — есть ли в выбранной папке письмо с таким Message-ID.
+func HasMessageID(c *imapclient.Client, id string) (bool, error) {
+	data, err := c.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Message-ID", Value: id}}}, nil).Wait()
+	if err != nil {
+		return false, err
+	}
+	return len(data.AllUIDs()) > 0, nil
+}

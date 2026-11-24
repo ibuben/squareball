@@ -115,6 +115,13 @@ export const api = {
   subscribeFolder: (name: string, subscribed: boolean) =>
     request<{ folders: Folder[] }>('POST', '/api/v1/folders/subscribe', { name, subscribed }),
   emptyFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/empty', { name }),
+  exportMboxURL: (folder: string) => `/api/v1/folders/export?${q_({ folder })}`,
+  importMail: (folder: string, files: File[]) => {
+    const f = new FormData()
+    for (const file of files) f.append('files', file, file.name)
+    return request<{ imported: number; duplicates: number; too_large: number; failed: number }>(
+      'POST', `/api/v1/folders/import?${q_({ folder })}`, f)
+  },
   readFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/read', { name }),
   messages: (folder: string, offset = 0, limit = 50, text = '', filter = '', threads = false) =>
     request<Page>('GET', `/api/v1/messages?${q_({ folder, offset, limit, q: text, filter, threads: threads ? 1 : undefined })}`),

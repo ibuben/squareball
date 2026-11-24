@@ -44,6 +44,7 @@ func (s *Server) routes(static http.Handler) {
 	s.folderRoutes()
 	s.prefRoutes()
 	s.templateRoutes()
+	s.mboxRoutes()
 	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
 	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
 	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))

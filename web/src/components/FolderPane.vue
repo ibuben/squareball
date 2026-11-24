@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import {
-  Archive, CheckCheck, Eraser, FileText, Folder as FolderIcon, FolderPlus, Inbox, Pencil, PenSquare, Send,
-  ShieldAlert, Trash2,
+  Archive, CheckCheck, Download, Eraser, FileText, Folder as FolderIcon, FolderPlus, Inbox, Pencil, PenSquare, Send,
+  ShieldAlert, Trash2, Upload,
 } from 'lucide-vue-next'
-import type { Folder } from '../api'
+import { api, type Folder } from '../api'
 import { t } from '../i18n'
 import {
-  createFolder, deleteFolder, emptyFolder, folderParent, folderTitle, moveSelected, openCompose, openFolder,
+  createFolder, deleteFolder, emptyFolder, folderParent, folderTitle, importMail, moveSelected, openCompose, openFolder,
   readFolder, renameFolder, state, visibleFolders,
 } from '../store'
 
@@ -75,6 +75,20 @@ async function remove(f: Folder) {
   const n = f.total ? ` и ${f.total} писем в ней` : ''
   if (confirm(`Удалить папку «${f.display}»${sub}${n}? Это нельзя отменить.`)) await deleteFolder(f)
 }
+// Загрузка писем: меню закрывается, а папка запоминается до выбора файлов.
+const importInput = ref<HTMLInputElement>()
+let importTarget: Folder | null = null
+function startImport(f: Folder) {
+  importTarget = f
+  importInput.value?.click()
+}
+function onImportFiles(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (importTarget) void importMail(importTarget, files)
+}
+
 async function empty(f: Folder) {
   if (confirm(`Удалить навсегда все письма в папке «${folderTitle(f)}» (${f.total})?`)) await emptyFolder(f)
 }
@@ -113,6 +127,8 @@ async function empty(f: Folder) {
       </template>
     </div>
 
+    <input ref="importInput" type="file" accept=".mbox,.eml,.mbx,application/mbox,message/rfc822" multiple hidden
+           data-test="folder-import-input" @change="onImportFiles" />
     <div v-if="menu" ref="menuEl" class="menu" role="menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
          data-test="folder-menu" @keydown.esc="closeMenu">
       <button v-if="menu.f.delimiter" role="menuitem" @click="act(newFolder)"><FolderPlus :size="15" /> Новая подпапка</button>
@@ -121,6 +137,11 @@ async function empty(f: Folder) {
       </button>
       <button v-if="menu.f.role === 'trash' || menu.f.role === 'junk'" role="menuitem" :disabled="!menu.f.total" @click="act(empty)">
         <Eraser :size="15" /> Очистить папку
+      </button>
+      <a v-if="menu.f.selectable" role="menuitem" class="item" :href="api.exportMboxURL(menu.f.name)" download
+         data-test="folder-export" @click="closeMenu"><Download :size="15" /> Скачать письма (mbox)</a>
+      <button v-if="menu.f.selectable" role="menuitem" data-test="folder-import" @click="act(startImport)">
+        <Upload :size="15" /> Загрузить письма (.mbox, .eml)
       </button>
       <template v-if="!isSystem(menu.f)">
         <button role="menuitem" @click="act(rename)"><Pencil :size="15" /> Переименовать</button>
@@ -154,9 +175,9 @@ async function empty(f: Folder) {
 .count.strong { color: var(--accent); font-weight: 700; }
 .menu { position: fixed; z-index: 50; min-width: 220px; padding: 4px; background: var(--pane);
   border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); display: grid; }
-.menu button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px;
+.menu button, .menu a.item { display: flex; text-decoration: none; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px;
   background: none; text-align: left; color: var(--text); }
-.menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--hover); outline: none; }
+.menu button:hover:not(:disabled), .menu button:focus-visible, .menu a.item:hover, .menu a.item:focus-visible { background: var(--hover); outline: none; }
 .menu button:disabled { color: var(--text-3); }
 .menu .danger { color: var(--danger); }
 </style>

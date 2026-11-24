@@ -940,3 +940,97 @@ func TestIntegrationThreads(t *testing.T) {
 		t.Errorf("flat total: %v", flat["total"])
 	}
 }
+
+func TestIntegrationMbox(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	s := newServer(t, testConfig(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+	src, dst := "IT-mbox-src", "IT-mbox-dst"
+	for _, n := range []string{src, dst} {
+		c.do("POST", "/api/v1/folders/delete", map[string]string{"name": n})
+		if st, b := c.do("POST", "/api/v1/folders", map[string]string{"name": n}); st != 200 {
+			t.Fatalf("create %s: %d %v", n, st, b)
+		}
+	}
+	defer func() {
+		for _, n := range []string{src, dst} {
+			c.do("POST", "/api/v1/folders/delete", map[string]string{"name": n})
+		}
+	}()
+	importFiles := func(folder string, files map[string]string) (int, map[string]any) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		for name, body := range files {
+			fw, _ := mw.CreateFormFile("files", name)
+			fw.Write([]byte(body))
+		}
+		mw.Close()
+		req, _ := http.NewRequest("POST", ts.URL+"/api/v1/folders/import?folder="+url.QueryEscape(folder), &buf)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("X-CSRF-Token", c.csrf)
+		return c.send(req)
+	}
+	mbox := "From alice@test.local Mon Jan  2 10:00:00 2023\nFrom: alice@test.local\nSubject: Первое\nMessage-ID: <m1." + strconv.FormatInt(time.Now().UnixNano(), 36) + "@test.local>\nStatus: RO\nX-Status: F\n\nТекст\n>From строки\n\n" +
+		"From bob@test.local Tue Jan  3 11:00:00 2023\nFrom: bob@test.local\nSubject: Второе\n\nЕщё\n"
+	eml := "From: carol@test.local\r\nSubject: Из eml\r\nDate: Wed, 04 Jan 2023 12:00:00 +0000\r\n\r\nFrom eml body\r\n"
+	if st, b := importFiles(src, map[string]string{"a.mbox": mbox, "c.eml": eml}); st != 200 || b["imported"] != float64(3) {
+		t.Fatalf("import: %d %v", st, b)
+	}
+	// Повторный импорт: письмо с Message-ID пропускается.
+	if st, b := importFiles(src, map[string]string{"a.mbox": mbox}); st != 200 || b["duplicates"] != float64(1) || b["imported"] != float64(1) {
+		t.Errorf("reimport: %d %v", st, b)
+	}
+	_, page := c.do("GET", "/api/v1/messages?folder="+url.QueryEscape(src)+"&limit=50", nil)
+	var flagged, seen int
+	for _, x := range page["messages"].([]any) {
+		m := x.(map[string]any)
+		if m["subject"] == "Первое" {
+			if m["flagged"] == true {
+				flagged++
+			}
+			if m["seen"] == true {
+				seen++
+			}
+			if !strings.HasPrefix(m["date"].(string), "2023-01-02") {
+				t.Errorf("date: %v", m["date"])
+			}
+		}
+	}
+	if page["total"] != float64(4) || flagged != 1 || seen != 1 {
+		t.Fatalf("imported list: total=%v flagged=%d seen=%d", page["total"], flagged, seen)
+	}
+
+	resp, err := c.hc.Get(ts.URL + "/api/v1/folders/export?folder=" + url.QueryEscape(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/mbox" || strings.Count(string(out), "\nFrom ")+1 < 4 {
+		t.Fatalf("export: %d %s\n%s", resp.StatusCode, resp.Header, out)
+	}
+	if !strings.Contains(string(out), "\n>From строки\n") || !strings.Contains(string(out), "\n>From eml body\n") {
+		t.Errorf("export escaping:\n%s", out)
+	}
+	// Выгрузка src (4 письма) целиком ложится в пустую dst.
+	if st, b := importFiles(dst, map[string]string{"export.mbox": string(out)}); st != 200 || b["imported"] != float64(4) {
+		t.Errorf("import of export: %d %v", st, b)
+	}
+	_, page = c.do("GET", "/api/v1/messages?folder="+url.QueryEscape(dst)+"&q="+url.QueryEscape("строки"), nil)
+	if page["total"] != float64(1) {
+		t.Errorf("round trip body search: %v", page["total"])
+	}
+	if st, _ := c.do("GET", "/api/v1/folders/export?folder=NoSuchFolder", nil); st == 200 {
+		t.Error("export of missing folder must fail")
+	}
+}

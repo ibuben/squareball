@@ -207,6 +207,22 @@ export async function emptyFolder(f: Folder) {
   } catch (e) { folderError(e) }
 }
 
+// Импорт писем из .mbox / .eml в папку.
+export async function importMail(f: Folder, files: File[]) {
+  if (!files.length) return
+  toast(`Загрузка писем в «${folderTitle(f)}»…`)
+  try {
+    const r = await api.importMail(f.name, files)
+    const parts = [`Загружено писем: ${r.imported}`]
+    if (r.duplicates) parts.push(`уже были: ${r.duplicates}`)
+    if (r.too_large) parts.push(`слишком большие: ${r.too_large}`)
+    if (r.failed) parts.push(`не приняты сервером: ${r.failed}`)
+    toast(parts.join(', '))
+    void loadFolders()
+    if (state.folder === f.name) void loadList()
+  } catch (e) { folderError(e) }
+}
+
 export async function readFolder(f: Folder) {
   try {
     afterFolders((await api.readFolder(f.name)).folders)

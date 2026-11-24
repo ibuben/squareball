@@ -515,6 +515,39 @@ try {
   if (await page.locator('.item', { hasText: thrSubject }).count()) throw new Error('письма цепочки остались во «Входящих»')
   step('цепочка свернулась, развернулась и удалилась целиком')
 
+  // mbox: загрузить два письма в новую папку, скачать её обратно.
+  const mboxFolder = `e2e mbox ${stamp}`
+  page.once('dialog', (d) => d.accept(mboxFolder))
+  await page.locator('[data-test=folder-new]').click()
+  const mf = pane.locator(`.folder[data-folder="${mboxFolder}"]`)
+  await mf.waitFor()
+  await mf.click({ button: 'right' })
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('[data-test=folder-menu] [data-test=folder-import]').click(),
+  ])
+  await chooser.setFiles({ name: 'old.mbox', mimeType: 'application/mbox', buffer: Buffer.from(
+    'From x@test.local Mon Jan  2 10:00:00 2023\nFrom: x@test.local\nSubject: Из mbox один\n\nТекст\n\n' +
+    'From y@test.local Tue Jan  3 10:00:00 2023\nFrom: y@test.local\nSubject: Из mbox два\nStatus: RO\n\nТекст 2\n') })
+  await page.getByText('Загружено писем: 2').waitFor()
+  await mf.click()
+  await page.locator('.item', { hasText: 'Из mbox один' }).waitFor()
+  await page.locator('.item', { hasText: 'Из mbox два' }).waitFor()
+  await mf.click({ button: 'right' })
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('[data-test=folder-menu] [data-test=folder-export]').click(),
+  ])
+  const mboxText = (await import('node:fs')).readFileSync(await download.path(), 'utf8')
+  if (download.suggestedFilename() !== `${mboxFolder}.mbox` || (mboxText.match(/^From /gm) ?? []).length !== 2) {
+    throw new Error(`выгрузка mbox: ${download.suggestedFilename()}\n${mboxText}`)
+  }
+  await mf.click({ button: 'right' })
+  page.once('dialog', (d) => d.accept())
+  await page.locator('[data-test=folder-menu]').getByRole('menuitem', { name: 'Удалить папку' }).click()
+  await mf.waitFor({ state: 'detached' })
+  step('mbox: два письма загружены в папку и скачаны обратно')
+
   await page.getByRole('button', { name: 'Настройки' }).first().click()
   await page.locator('.nav .item', { hasText: 'Шаблоны ответов' }).click()
   page.once('dialog', (d) => d.accept())
