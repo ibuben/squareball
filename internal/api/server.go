@@ -194,7 +194,7 @@ func (s *Server) StartSession(w http.ResponseWriter, r *http.Request, g ext.Sess
 		return err
 	}
 	s.pool.Adopt(sess.ID, c)
-	s.setCookie(w, cookie)
+	s.setCookie(w, r, cookie)
 	s.audit.Info("login", "mailbox", g.Mailbox, "source", g.Source, "mode", "impersonation", "ip", ip)
 	return nil
 }
@@ -277,20 +277,20 @@ func (s *Server) smtpCreds(sess *session.Session) mail.Creds {
 	return cr
 }
 
-func (s *Server) setCookie(w http.ResponseWriter, value string) {
+func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string) {
 	sameSite := http.SameSiteLaxMode
 	if len(s.cfg.Server.FrameAncestors) > 0 && s.secure {
 		sameSite = http.SameSiteNoneMode // для встраивания в iframe панели
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: s.cfg.Session.CookieName, Value: value, Path: "/", HttpOnly: true,
+		Name: s.cfg.Session.CookieName, Value: value, Path: s.BasePath(r) + "/", HttpOnly: true,
 		Secure: s.secure, SameSite: sameSite,
 	})
 }
 
-func (s *Server) clearCookie(w http.ResponseWriter) {
+func (s *Server) clearCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name: s.cfg.Session.CookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secure,
+		Name: s.cfg.Session.CookieName, Value: "", Path: s.BasePath(r) + "/", MaxAge: -1, HttpOnly: true, Secure: s.secure,
 	})
 }
 
@@ -311,7 +311,7 @@ func (s *Server) authed(h http.HandlerFunc) http.HandlerFunc {
 		}
 		sess, err := s.sessions.Get(c.Value)
 		if err != nil {
-			s.clearCookie(w)
+			s.clearCookie(w, r)
 			writeErr(w, http.StatusUnauthorized, "auth.required", "")
 			return
 		}
@@ -330,9 +330,16 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 	if origin == "" {
 		return true // не браузерный запрос или тот же origin в старых браузерах; CSRF-токен всё равно обязателен
 	}
-	pu, _ := url.Parse(s.cfg.Server.PublicURL)
 	ou, err := url.Parse(origin)
-	return err == nil && strings.EqualFold(ou.Host, pu.Host) && ou.Scheme == pu.Scheme
+	if err != nil {
+		return false
+	}
+	pu, _ := url.Parse(s.cfg.Server.PublicURL)
+	if strings.EqualFold(ou.Host, pu.Host) && ou.Scheme == pu.Scheme {
+		return true
+	}
+	scheme, host, ok := s.requestOrigin(r)
+	return ok && strings.EqualFold(ou.Host, host) && ou.Scheme == scheme
 }
 
 // withIMAP выполняет операцию на IMAP-соединении сессии и переводит ошибки в HTTP.
@@ -356,7 +363,7 @@ func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
 		if sess != nil {
 			s.sessions.Delete(sess.ID)
 		}
-		s.clearCookie(w)
+		s.clearCookie(w, r)
 		writeErr(w, http.StatusUnauthorized, "auth.expired", "")
 	case errors.Is(err, mail.ErrNoDrafts):
 		writeErr(w, http.StatusConflict, "mail.no_drafts_folder", "")
@@ -392,7 +399,7 @@ func (s *Server) securityHeaders(h http.Handler) http.Handler {
 	// а style-src — inline-стили писем. Скрипты — только свои.
 	csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
 		"img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; " +
-		"frame-src 'self' about:; object-src 'none'; base-uri 'none'; form-action 'self'; " +
+		"frame-src 'self' about:; object-src 'none'; base-uri 'self'; form-action 'self'; " +
 		"frame-ancestors " + fa
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()

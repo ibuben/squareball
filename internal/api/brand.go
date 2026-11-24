@@ -42,14 +42,14 @@ func loadBrandAssets(b *config.Brand) (map[string]brandAsset, error) {
 }
 
 // configBrand — оформление из ui.brand; файлы превращаются в ссылки /brand/<name>.
-func (s *Server) configBrand() ext.Brand {
+func (s *Server) configBrand(base string) ext.Brand {
 	ub := &s.cfg.UI.Brand
 	b := ext.Brand{Name: ub.Name, Accent: ub.Accent, AccentDark: ub.AccentDark, CSSVars: ub.CSSVars, HideAbout: ub.HideAbout}
 	urls := []*string{&b.LogoURL, &b.LogoDarkURL, &b.FaviconURL}
 	for i, a := range ub.Assets() {
 		*urls[i] = a.URL
 		if f, ok := s.brandAssets[a.Name]; ok {
-			*urls[i] = "/brand/" + a.Name + "?v=" + f.version
+			*urls[i] = base + "/brand/" + a.Name + "?v=" + f.version
 		}
 	}
 	return b
@@ -58,7 +58,7 @@ func (s *Server) configBrand() ext.Brand {
 // brandFor — оформление для хоста запроса: поля провайдера адаптера поверх ui.brand.
 // Некорректные значения провайдера отбрасываются — их проверяет только конфиг.
 func (s *Server) brandFor(r *http.Request) ext.Brand {
-	b := s.configBrand()
+	b := s.configBrand(s.BasePath(r))
 	s.mu.RLock()
 	bp := s.brand
 	s.mu.RUnlock()

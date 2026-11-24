@@ -5,6 +5,7 @@ version: 1
 server:
   listen: "127.0.0.1:8080"          # за nginx/caddy; см. README про поток /api/v1/events
   public_url: https://mail.example.com
+  # multi_host: true                # webmail.<домен> для многих доменов: Origin сверяется с адресом запроса
 
 session:
   secret_file: /etc/webmail/session.key

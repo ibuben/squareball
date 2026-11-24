@@ -98,7 +98,7 @@ async function refresh(force = false) {
 }
 
 function connectEvents() {
-  events = new EventSource('/api/v1/events')
+  events = new EventSource('api/v1/events')
   events.addEventListener('ready', () => { live.value = true })
   events.addEventListener('mailbox', async () => {
     await loadFolders()

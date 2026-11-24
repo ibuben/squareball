@@ -21,6 +21,7 @@ import (
 	"github.com/ibuben/squareball/internal/password"
 	"github.com/ibuben/squareball/internal/sanitize"
 	"github.com/ibuben/squareball/internal/session"
+	"github.com/ibuben/squareball/internal/web"
 )
 
 func (s *Server) routes(static http.Handler) {
@@ -59,7 +60,9 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("GET /api/v1/account/password", s.authed(s.handlePasswordInfo))
 	m.HandleFunc("POST /api/v1/account/password", s.authed(s.handlePassword))
 	if static != nil {
-		m.Handle("/", static)
+		m.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			static.ServeHTTP(w, r.WithContext(web.WithBase(r.Context(), s.BasePath(r))))
+		}))
 	}
 }
 
@@ -142,7 +145,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.pool.Adopt(sess.ID, c)
-	s.setCookie(w, cookie)
+	s.setCookie(w, r, cookie)
 	s.audit.Info("login", "mailbox", user, "source", "password", "ip", ip)
 	writeJSON(w, http.StatusOK, s.meBody(r, sess.Mailbox, sess.CSRF))
 }
@@ -150,7 +153,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r.Context())
 	s.sessions.Delete(sess.ID)
-	s.clearCookie(w)
+	s.clearCookie(w, r)
 	s.audit.Info("logout", "mailbox", sess.Mailbox, "ip", s.ClientIP(r))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

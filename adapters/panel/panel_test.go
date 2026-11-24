@@ -21,6 +21,7 @@ import (
 var secret = bytes.Repeat([]byte("k"), 32)
 
 type fakeCore struct {
+	base     string
 	mux      *http.ServeMux
 	grants   []ext.SessionGrant
 	startErr error
@@ -34,6 +35,8 @@ func (f *fakeCore) StartSession(w http.ResponseWriter, r *http.Request, g ext.Se
 	return f.startErr
 }
 func (f *fakeCore) Lang(r *http.Request) string { return "en" }
+
+func (f *fakeCore) BasePath(r *http.Request) string { return f.base }
 
 func (f *fakeCore) ClientIP(r *http.Request) string {
 	h, _, _ := strings.Cut(r.RemoteAddr, ":")

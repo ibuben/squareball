@@ -51,6 +51,28 @@ smtp:
 Сервер слушает `127.0.0.1:8080`; TLS обычно завершает nginx или caddy перед ним
 (адрес прокси должен быть в `server.trusted_proxies`, по умолчанию 127.0.0.1).
 
+### Несколько адресов и путь под прокси
+
+Один экземпляр можно опубликовать сразу под несколькими адресами и под путём:
+
+- `server.multi_host: true` — изменяющие запросы принимаются не только с
+  `public_url`, но и с того адреса, по которому открыт сам запрос (заголовок `Host`
+  и `X-Forwarded-Proto` от доверенного прокси). Так работает `webmail.<домен>`
+  для каждого домена сервера.
+- `X-Forwarded-Prefix` от доверенного прокси — путь, под которым опубликован webmail
+  (например, `/webmail`). Прокси отрезает его сам, а webmail ставит `<base href>`,
+  путь cookie и ссылки от этого пути:
+
+```nginx
+location ^~ /webmail/ {
+    proxy_pass http://127.0.0.1:8080/;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /webmail;
+}
+```
+
 ### Правила конфига
 
 - Неизвестный ключ — ошибка при старте.

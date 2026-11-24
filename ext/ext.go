@@ -39,6 +39,9 @@ type Core interface {
 	StartSession(w http.ResponseWriter, r *http.Request, g SessionGrant) error
 	// ClientIP возвращает реальный IP клиента с учётом server.trusted_proxies.
 	ClientIP(r *http.Request) string
+	// BasePath — путь, под которым прокси публикует webmail для этого запроса
+	// ("/webmail"; "" — корень). Ссылки и редиректы адаптера строятся от него.
+	BasePath(r *http.Request) string
 	// Lang — язык пользователя ("en", "ru"…) для страниц и текстов адаптера:
 	// выбранный в интерфейсе, иначе из Accept-Language, иначе ui.default_language.
 	Lang(r *http.Request) string

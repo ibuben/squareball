@@ -45,6 +45,10 @@ type Server struct {
 	Listen         string   `yaml:"listen"`
 	PublicURL      string   `yaml:"public_url"`
 	TrustedProxies []string `yaml:"trusted_proxies"`
+	// MultiHost — webmail опубликован прокси под несколькими адресами (например,
+	// webmail.<домен> для каждого домена): Origin изменяющих запросов сверяется
+	// с адресом самого запроса, если он пришёл от доверенного прокси.
+	MultiHost bool `yaml:"multi_host"`
 	TLS            struct {
 		CertFile string `yaml:"cert_file"`
 		KeyFile  string `yaml:"key_file"`

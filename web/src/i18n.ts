@@ -30,7 +30,7 @@ const current = ref<Lang>(stored() ?? 'en')
 function apply(l: Lang) {
   current.value = l
   document.documentElement.lang = l
-  document.cookie = `wm_lang=${l}; path=/; max-age=31536000; samesite=lax`
+  document.cookie = `wm_lang=${l}; path=${new URL(document.baseURI).pathname}; max-age=31536000; samesite=lax`
 }
 apply(current.value)
 

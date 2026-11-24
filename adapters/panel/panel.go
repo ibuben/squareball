@@ -288,7 +288,7 @@ func (a *Adapter) handleSSO(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, http.StatusBadGateway, "unavailable")
 		return
 	}
-	http.Redirect(w, r, landing(c), http.StatusSeeOther)
+	http.Redirect(w, r, a.core.BasePath(r)+landing(c), http.StatusSeeOther)
 }
 
 // prefValue — короткое значение из латиницы и дефиса ("ru", "pt-br", "dark"); иное отбрасывается.
@@ -340,8 +340,8 @@ func (a *Adapter) fail(w http.ResponseWriter, r *http.Request, status int, reaso
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html><html lang="%s"><meta charset="utf-8"><meta name="viewport" content="width=device-width">`+
 		`<title>%s</title><body style="font:16px system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px">`+
-		`<p>%s</p><p><a href="/">%s</a></p></body>`,
-		lang, html.EscapeString(tx["title"]), html.EscapeString(tx[reason]), html.EscapeString(tx["password"]))
+		`<p>%s</p><p><a href="%s/">%s</a></p></body>`,
+		lang, html.EscapeString(tx["title"]), html.EscapeString(tx[reason]), html.EscapeString(a.core.BasePath(r)), html.EscapeString(tx["password"]))
 }
 
 // --- служебный API ----------------------------------------------------------------

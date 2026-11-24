@@ -134,87 +134,87 @@ const q_ = (params: Record<string, string | number | undefined>) =>
   ).toString()
 
 export const api = {
-  config: () => request<UIConfig>('GET', '/api/v1/config'),
-  me: () => request<Me>('GET', '/api/v1/auth/me'),
-  login: (username: string, password: string) => request<Me>('POST', '/api/v1/auth/login', { username, password }),
-  logout: () => request('POST', '/api/v1/auth/logout'),
-  folders: () => request<{ folders: Folder[] }>('GET', '/api/v1/folders'),
+  config: () => request<UIConfig>('GET', 'api/v1/config'),
+  me: () => request<Me>('GET', 'api/v1/auth/me'),
+  login: (username: string, password: string) => request<Me>('POST', 'api/v1/auth/login', { username, password }),
+  logout: () => request('POST', 'api/v1/auth/logout'),
+  folders: () => request<{ folders: Folder[] }>('GET', 'api/v1/folders'),
   createFolder: (parent: string, name: string) =>
-    request<{ folders: Folder[]; name: string }>('POST', '/api/v1/folders', { parent, name }),
+    request<{ folders: Folder[]; name: string }>('POST', 'api/v1/folders', { parent, name }),
   renameFolder: (name: string, parent: string, new_name: string) =>
-    request<{ folders: Folder[]; name: string }>('POST', '/api/v1/folders/rename', { name, parent, new_name }),
-  deleteFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/delete', { name }),
+    request<{ folders: Folder[]; name: string }>('POST', 'api/v1/folders/rename', { name, parent, new_name }),
+  deleteFolder: (name: string) => request<{ folders: Folder[] }>('POST', 'api/v1/folders/delete', { name }),
   subscribeFolder: (name: string, subscribed: boolean) =>
-    request<{ folders: Folder[] }>('POST', '/api/v1/folders/subscribe', { name, subscribed }),
-  emptyFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/empty', { name }),
-  exportMboxURL: (folder: string) => `/api/v1/folders/export?${q_({ folder })}`,
+    request<{ folders: Folder[] }>('POST', 'api/v1/folders/subscribe', { name, subscribed }),
+  emptyFolder: (name: string) => request<{ folders: Folder[] }>('POST', 'api/v1/folders/empty', { name }),
+  exportMboxURL: (folder: string) => `api/v1/folders/export?${q_({ folder })}`,
   importMail: (folder: string, files: File[]) => {
     const f = new FormData()
     for (const file of files) f.append('files', file, file.name)
     return request<{ imported: number; duplicates: number; too_large: number; failed: number }>(
-      'POST', `/api/v1/folders/import?${q_({ folder })}`, f)
+      'POST', `api/v1/folders/import?${q_({ folder })}`, f)
   },
-  readFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/read', { name }),
+  readFolder: (name: string) => request<{ folders: Folder[] }>('POST', 'api/v1/folders/read', { name }),
   messages: (folder: string, offset = 0, limit = 50, text = '', filter = '', threads = false) =>
-    request<Page>('GET', `/api/v1/messages?${q_({ folder, offset, limit, q: text, filter, threads: threads ? 1 : undefined })}`),
+    request<Page>('GET', `api/v1/messages?${q_({ folder, offset, limit, q: text, filter, threads: threads ? 1 : undefined })}`),
   message: (folder: string, uid: number, images = false, peek = false) =>
-    request<MessageView>('GET', `/api/v1/message?${q_({ folder, uid, images: images ? 1 : undefined, peek: peek ? 1 : undefined })}`),
+    request<MessageView>('GET', `api/v1/message?${q_({ folder, uid, images: images ? 1 : undefined, peek: peek ? 1 : undefined })}`),
   partURL: (folder: string, uid: number, index: number, download = false) =>
-    `/api/v1/part?${q_({ folder, uid, index, download: download ? 1 : undefined })}`,
-  rawURL: (folder: string, uid: number) => `/api/v1/raw?${q_({ folder, uid })}`,
+    `api/v1/part?${q_({ folder, uid, index, download: download ? 1 : undefined })}`,
+  rawURL: (folder: string, uid: number) => `api/v1/raw?${q_({ folder, uid })}`,
   flags: (folder: string, uids: number[], flags: string[], add: boolean) =>
-    request('POST', '/api/v1/messages/flags', { folder, uids, flags, add }),
+    request('POST', 'api/v1/messages/flags', { folder, uids, flags, add }),
   archive: (folder: string, uids: number[]) =>
-    request<{ ok: boolean; moved: number }>('POST', '/api/v1/messages/archive', { folder, uids }),
-  prefs: () => request<{ prefs: Prefs }>('GET', '/api/v1/prefs'),
+    request<{ ok: boolean; moved: number }>('POST', 'api/v1/messages/archive', { folder, uids }),
+  prefs: () => request<{ prefs: Prefs }>('GET', 'api/v1/prefs'),
   spell: (dictionary: string, words: string[]) =>
-    request<{ misspelled: Record<string, string[]> }>('POST', '/api/v1/spell', { dictionary, words }),
-  spellWords: () => request<{ words: string[] }>('GET', '/api/v1/spell/words'),
-  addSpellWord: (word: string) => request<{ words: string[] }>('POST', '/api/v1/spell/words', { word }),
-  deleteSpellWord: (word: string) => request<{ words: string[] }>('POST', '/api/v1/spell/words/delete', { word }),
-  setPrefs: (p: Partial<Prefs>) => request<{ prefs: Prefs }>('PUT', '/api/v1/prefs', p),
+    request<{ misspelled: Record<string, string[]> }>('POST', 'api/v1/spell', { dictionary, words }),
+  spellWords: () => request<{ words: string[] }>('GET', 'api/v1/spell/words'),
+  addSpellWord: (word: string) => request<{ words: string[] }>('POST', 'api/v1/spell/words', { word }),
+  deleteSpellWord: (word: string) => request<{ words: string[] }>('POST', 'api/v1/spell/words/delete', { word }),
+  setPrefs: (p: Partial<Prefs>) => request<{ prefs: Prefs }>('PUT', 'api/v1/prefs', p),
   mdn: (folder: string, uid: number, send: boolean, auto = false) =>
-    request<{ ok: boolean; sent: boolean }>('POST', '/api/v1/messages/mdn', { folder, uid, send, auto }),
+    request<{ ok: boolean; sent: boolean }>('POST', 'api/v1/messages/mdn', { folder, uid, send, auto }),
   inviteReply: (folder: string, uid: number, partstat: PartStat, comment = '') =>
-    request<{ ok: boolean; partstat: PartStat; to: string }>('POST', '/api/v1/messages/invite-reply', { folder, uid, partstat, comment }),
-  zipURL: (folder: string, uid: number, name: string) => `/api/v1/attachments.zip?${q_({ folder, uid, name })}`,
+    request<{ ok: boolean; partstat: PartStat; to: string }>('POST', 'api/v1/messages/invite-reply', { folder, uid, partstat, comment }),
+  zipURL: (folder: string, uid: number, name: string) => `api/v1/attachments.zip?${q_({ folder, uid, name })}`,
   move: (folder: string, uids: number[], dest: string) =>
-    request('POST', '/api/v1/messages/move', { folder, uids, dest }),
+    request('POST', 'api/v1/messages/move', { folder, uids, dest }),
   remove: (folder: string, uids: number[]) =>
-    request<{ ok: boolean; permanent: boolean }>('POST', '/api/v1/messages/delete', { folder, uids }),
-  send: (form: FormData) => request<{ ok: boolean; warning?: string }>('POST', '/api/v1/send', form),
-  saveDraft: (form: FormData) => request<{ ok: boolean; draft_ref: MsgRef }>('POST', '/api/v1/drafts', form),
-  discardDraft: (ref: MsgRef) => request('POST', '/api/v1/drafts/discard', ref),
-  identities: () => request<{ identities: Identity[]; level: 'single' | 'domain' | 'any' }>('GET', '/api/v1/identities'),
-  saveIdentity: (i: Partial<Identity>) => request<Identity>('POST', '/api/v1/identities', i),
-  deleteIdentity: (id: number) => request('POST', '/api/v1/identities/delete', { id }),
+    request<{ ok: boolean; permanent: boolean }>('POST', 'api/v1/messages/delete', { folder, uids }),
+  send: (form: FormData) => request<{ ok: boolean; warning?: string }>('POST', 'api/v1/send', form),
+  saveDraft: (form: FormData) => request<{ ok: boolean; draft_ref: MsgRef }>('POST', 'api/v1/drafts', form),
+  discardDraft: (ref: MsgRef) => request('POST', 'api/v1/drafts/discard', ref),
+  identities: () => request<{ identities: Identity[]; level: 'single' | 'domain' | 'any' }>('GET', 'api/v1/identities'),
+  saveIdentity: (i: Partial<Identity>) => request<Identity>('POST', 'api/v1/identities', i),
+  deleteIdentity: (id: number) => request('POST', 'api/v1/identities/delete', { id }),
   contacts: (q = '', group = 0, offset = 0, limit = 200, book?: number) =>
-    request<{ contacts: Contact[]; total: number }>('GET', `/api/v1/contacts?${q_({ q, group: group || undefined, offset, limit, book })}`),
-  books: () => request<Books>('GET', '/api/v1/books'),
-  syncBooks: (force = false, account = 0) => request<Books>('POST', '/api/v1/books/sync', { force, account }),
+    request<{ contacts: Contact[]; total: number }>('GET', `api/v1/contacts?${q_({ q, group: group || undefined, offset, limit, book })}`),
+  books: () => request<Books>('GET', 'api/v1/books'),
+  syncBooks: (force = false, account = 0) => request<Books>('POST', 'api/v1/books/sync', { force, account }),
   addBookAccount: (a: { name: string; url: string; username: string; password: string }) =>
-    request<Books>('POST', '/api/v1/books/accounts', a),
-  deleteBookAccount: (id: number) => request<Books>('POST', '/api/v1/books/accounts/delete', { id }),
-  saveContact: (c: Partial<Contact>) => request<Contact>('POST', '/api/v1/contacts', c),
-  deleteContacts: (ids: number[]) => request<{ deleted: number; failed?: number }>('POST', '/api/v1/contacts/delete', { ids }),
-  suggest: (q: string) => request<{ suggestions: Suggestion[] }>('GET', `/api/v1/contacts/suggest?${q_({ q })}`),
-  collected: (q = '') => request<{ collected: Collected[] }>('GET', `/api/v1/contacts/collected?${q_({ q })}`),
-  deleteCollected: (emails: string[]) => request('POST', '/api/v1/contacts/collected/delete', { emails }),
+    request<Books>('POST', 'api/v1/books/accounts', a),
+  deleteBookAccount: (id: number) => request<Books>('POST', 'api/v1/books/accounts/delete', { id }),
+  saveContact: (c: Partial<Contact>) => request<Contact>('POST', 'api/v1/contacts', c),
+  deleteContacts: (ids: number[]) => request<{ deleted: number; failed?: number }>('POST', 'api/v1/contacts/delete', { ids }),
+  suggest: (q: string) => request<{ suggestions: Suggestion[] }>('GET', `api/v1/contacts/suggest?${q_({ q })}`),
+  collected: (q = '') => request<{ collected: Collected[] }>('GET', `api/v1/contacts/collected?${q_({ q })}`),
+  deleteCollected: (emails: string[]) => request('POST', 'api/v1/contacts/collected/delete', { emails }),
   importContacts: (file: File) => {
     const f = new FormData()
     f.append('file', file)
-    return request<{ added: number; skipped: number; limit_reached: boolean }>('POST', '/api/v1/contacts/import', f)
+    return request<{ added: number; skipped: number; limit_reached: boolean }>('POST', 'api/v1/contacts/import', f)
   },
-  exportURL: (format: 'vcf' | 'csv', group = 0) => `/api/v1/contacts/export?${q_({ format, group: group || undefined })}`,
-  groups: () => request<{ groups: Group[] }>('GET', '/api/v1/groups'),
-  saveGroup: (g: Partial<Group>) => request<Group>('POST', '/api/v1/groups', g),
-  deleteGroup: (id: number) => request('POST', '/api/v1/groups/delete', { id }),
-  passwordPolicy: () => request<{ policy: PasswordPolicy; current_required: boolean }>('GET', '/api/v1/account/password'),
-  changePassword: (current: string, next: string) => request('POST', '/api/v1/account/password', { current, new: next }),
-  templates: () => request<{ templates: Template[] }>('GET', '/api/v1/templates'),
-  saveTemplate: (tpl: Partial<Template>) => request<Template>('POST', '/api/v1/templates', tpl),
-  deleteTemplate: (id: number) => request('POST', '/api/v1/templates/delete', { id }),
-  sieve: () => request<SieveState>('GET', '/api/v1/sieve'),
+  exportURL: (format: 'vcf' | 'csv', group = 0) => `api/v1/contacts/export?${q_({ format, group: group || undefined })}`,
+  groups: () => request<{ groups: Group[] }>('GET', 'api/v1/groups'),
+  saveGroup: (g: Partial<Group>) => request<Group>('POST', 'api/v1/groups', g),
+  deleteGroup: (id: number) => request('POST', 'api/v1/groups/delete', { id }),
+  passwordPolicy: () => request<{ policy: PasswordPolicy; current_required: boolean }>('GET', 'api/v1/account/password'),
+  changePassword: (current: string, next: string) => request('POST', 'api/v1/account/password', { current, new: next }),
+  templates: () => request<{ templates: Template[] }>('GET', 'api/v1/templates'),
+  saveTemplate: (tpl: Partial<Template>) => request<Template>('POST', 'api/v1/templates', tpl),
+  deleteTemplate: (id: number) => request('POST', 'api/v1/templates/delete', { id }),
+  sieve: () => request<SieveState>('GET', 'api/v1/sieve'),
   putSieve: (body: { mode: 'rules' | 'raw'; tag: string; ruleset?: Ruleset; raw?: string }) =>
-    request<SieveState>('PUT', '/api/v1/sieve', body),
+    request<SieveState>('PUT', 'api/v1/sieve', body),
 }
