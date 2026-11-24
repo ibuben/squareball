@@ -86,9 +86,13 @@ func hasAttachments(bs imap.BodyStructure) bool {
 		if !ok {
 			return true
 		}
-		if d := sp.Disposition(); d != nil && strings.EqualFold(d.Value, "attachment") {
+		d := sp.Disposition()
+		switch {
+		case d != nil && strings.EqualFold(d.Value, "attachment"):
 			found = true
-		} else if sp.Filename() != "" && !strings.HasPrefix(sp.MediaType(), "text/") {
+		case sp.ID != "" && strings.HasPrefix(sp.MediaType(), "image/"):
+			// Картинка в тексте (Content-ID) — не вложение, скрепку не показываем.
+		case sp.Filename() != "" && !strings.HasPrefix(sp.MediaType(), "text/"):
 			found = true
 		}
 		return !found

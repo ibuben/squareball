@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emersion/go-message"
 	gomail "github.com/emersion/go-message/mail"
 )
 
@@ -17,6 +18,25 @@ type Upload struct {
 	Filename    string
 	ContentType string
 	Data        []byte
+	ContentID   string // только для картинок в тексте
+}
+
+func textHeader(ct string) message.Header {
+	var h message.Header
+	h.SetContentType(ct, map[string]string{"charset": "utf-8"})
+	h.Set("Content-Transfer-Encoding", "quoted-printable")
+	return h
+}
+
+func writeLeaf(parent *message.Writer, h message.Header, data []byte) error {
+	w, err := parent.CreatePart(h)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	return w.Close()
 }
 
 type Draft struct {
@@ -29,11 +49,12 @@ type Draft struct {
 	InReplyTo   string
 	References  []string
 	Attachments []Upload
-	Hostname    string // для Message-ID
-	KeepBcc     bool   // писать Bcc в заголовки — только для черновиков
-	Priority    int    // 1 — высокая, 5 — низкая, 0 — обычная
-	ReadReceipt bool   // Disposition-Notification-To: адрес отправителя
-	DSN         bool   // уведомление о доставке (SMTP NOTIFY); в заголовки не пишется, но хранится в черновике
+	Inline      []Upload // картинки в тексте: ContentID обязателен, в HTML — src="cid:…"
+	Hostname    string   // для Message-ID
+	KeepBcc     bool     // писать Bcc в заголовки — только для черновиков
+	Priority    int      // 1 — высокая, 5 — низкая, 0 — обычная
+	ReadReceipt bool     // Disposition-Notification-To: адрес отправителя
+	DSN         bool     // уведомление о доставке (SMTP NOTIFY); в заголовки не пишется, но хранится в черновике
 }
 
 // Recipients — адреса конверта (To + Cc + Bcc) без повторов.
@@ -133,29 +154,7 @@ func Build(d *Draft) ([]byte, string, error) {
 	}
 
 	var buf bytes.Buffer
-	writeBodies := func(iw *gomail.InlineWriter) error {
-		var th gomail.InlineHeader
-		th.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
-		w, err := iw.CreatePart(th)
-		if err != nil {
-			return err
-		}
-		io.WriteString(w, text)
-		w.Close()
-		if d.HTML != "" {
-			var hh gomail.InlineHeader
-			hh.SetContentType("text/html", map[string]string{"charset": "utf-8"})
-			w, err := iw.CreatePart(hh)
-			if err != nil {
-				return err
-			}
-			io.WriteString(w, d.HTML)
-			w.Close()
-		}
-		return iw.Close()
-	}
-
-	if len(d.Attachments) == 0 && d.HTML == "" {
+	if len(d.Attachments) == 0 && len(d.Inline) == 0 && d.HTML == "" {
 		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 		w, err := gomail.CreateSingleInlineWriter(&buf, h)
 		if err != nil {
@@ -167,46 +166,99 @@ func Build(d *Draft) ([]byte, string, error) {
 		}
 		return buf.Bytes(), msgID, nil
 	}
-	if len(d.Attachments) == 0 {
-		iw, err := gomail.CreateInlineWriter(&buf, h)
+
+	// Структура как у Thunderbird:
+	//   mixed { alternative { text, related { html, картинки } }, вложения }
+	// Уровни без содержимого опускаются.
+	inline := d.Inline
+	if d.HTML == "" {
+		inline = nil
+	}
+	writeText := func(parent *message.Writer) error {
+		return writeLeaf(parent, textHeader("text/plain"), []byte(text))
+	}
+	writeHTML := func(parent *message.Writer) error {
+		if len(inline) == 0 {
+			return writeLeaf(parent, textHeader("text/html"), []byte(d.HTML))
+		}
+		var rh message.Header
+		rh.SetContentType("multipart/related", map[string]string{"type": "text/html"})
+		rw, err := parent.CreatePart(rh)
 		if err != nil {
-			return nil, "", err
+			return err
 		}
-		if err := writeBodies(iw); err != nil {
-			return nil, "", err
+		if err := writeLeaf(rw, textHeader("text/html"), []byte(d.HTML)); err != nil {
+			return err
 		}
-		return buf.Bytes(), msgID, nil
+		for _, img := range inline {
+			var ih message.Header
+			ih.SetContentType(img.ContentType, nil)
+			ih.Set("Content-Transfer-Encoding", "base64")
+			ih.Set("Content-ID", "<"+img.ContentID+">")
+			ih.SetContentDisposition("inline", map[string]string{"filename": img.Filename})
+			if err := writeLeaf(rw, ih, img.Data); err != nil {
+				return err
+			}
+		}
+		return rw.Close()
+	}
+	writeBody := func(parent *message.Writer) error {
+		if d.HTML == "" {
+			return writeText(parent)
+		}
+		var ah message.Header
+		ah.SetContentType("multipart/alternative", nil)
+		aw, err := parent.CreatePart(ah)
+		if err != nil {
+			return err
+		}
+		if err := writeText(aw); err != nil {
+			return err
+		}
+		if err := writeHTML(aw); err != nil {
+			return err
+		}
+		return aw.Close()
 	}
 
-	mw, err := gomail.CreateWriter(&buf, h)
-	if err != nil {
-		return nil, "", err
-	}
-	iw, err := mw.CreateInline()
-	if err != nil {
-		return nil, "", err
-	}
-	if err := writeBodies(iw); err != nil {
-		return nil, "", err
-	}
-	for _, a := range d.Attachments {
-		var ah gomail.AttachmentHeader
-		ct := a.ContentType
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		ah.SetContentType(ct, nil)
-		ah.SetFilename(a.Filename)
-		w, err := mw.CreateAttachment(ah)
-		if err != nil {
+	var top *message.Writer
+	var err error
+	switch {
+	case len(d.Attachments) > 0:
+		h.SetContentType("multipart/mixed", nil)
+		if top, err = message.CreateWriter(&buf, h.Header); err != nil {
 			return nil, "", err
 		}
-		if _, err := w.Write(a.Data); err != nil {
+		if err := writeBody(top); err != nil {
 			return nil, "", err
 		}
-		w.Close()
+		for _, a := range d.Attachments {
+			var ah gomail.AttachmentHeader
+			ct := a.ContentType
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			ah.SetContentType(ct, nil)
+			ah.SetFilename(a.Filename)
+			ah.Set("Content-Transfer-Encoding", "base64")
+			if err := writeLeaf(top, ah.Header, a.Data); err != nil {
+				return nil, "", err
+			}
+		}
+	default:
+		// Без вложений верхний уровень — сам multipart/alternative.
+		h.SetContentType("multipart/alternative", nil)
+		if top, err = message.CreateWriter(&buf, h.Header); err != nil {
+			return nil, "", err
+		}
+		if err := writeText(top); err != nil {
+			return nil, "", err
+		}
+		if err := writeHTML(top); err != nil {
+			return nil, "", err
+		}
 	}
-	if err := mw.Close(); err != nil {
+	if err := top.Close(); err != nil {
 		return nil, "", fmt.Errorf("build message: %w", err)
 	}
 	return buf.Bytes(), msgID, nil

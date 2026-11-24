@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -778,4 +779,87 @@ func TestIntegrationPriorityAndMDN(t *testing.T) {
 	if !found {
 		t.Error("MDN did not arrive")
 	}
+}
+
+func (c *client) multipartFields(path, draft string, files map[string][2]string) (int, map[string]any) {
+	c.t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	mw.WriteField("draft", draft)
+	for field, f := range files {
+		fw, _ := mw.CreateFormFile(field, f[0])
+		fw.Write([]byte(f[1]))
+	}
+	mw.Close()
+	req, _ := http.NewRequest("POST", c.base+path, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", c.csrf)
+	return c.send(req)
+}
+
+// pngBytes — минимальный корректный PNG 1×1.
+var pngBytes = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89" +
+	"\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+
+func TestIntegrationInlineImages(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	s := newServer(t, testConfig(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+
+	// SVG и не-картинки в текст не принимаются.
+	if st, b := c.multipartFields("/api/v1/drafts", `{"subject":"bad","html":"<p><img src=\"cid:i1\"></p>"}`,
+		map[string][2]string{"inline:i1": {"x.svg", `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`}}); st != 400 || b["error"] != "send.bad_image" {
+		t.Errorf("svg: %d %v", st, b)
+	}
+
+	draft, _ := json.Marshal(map[string]any{"subject": "inline test", "html": `<p>Фото: <img src="cid:i1"> и <img src="cid:gone"></p>`})
+	st, d := c.multipartFields("/api/v1/drafts", string(draft), map[string][2]string{
+		"inline:i1": {"photo.png", string(pngBytes)}, "inline:unused": {"u.png", string(pngBytes)}})
+	if st != 200 {
+		t.Fatalf("draft: %d %v", st, d)
+	}
+	ref := d["draft_ref"].(map[string]any)
+	view := func(ref map[string]any) (map[string]any, string) {
+		_, v := c.do("GET", "/api/v1/message?peek=1&folder="+url.QueryEscape(ref["folder"].(string))+"&uid="+itoa(int(ref["uid"].(float64))), nil)
+		return v["message"].(map[string]any), v["body_html"].(string)
+	}
+	m, body := view(ref)
+	atts := m["attachments"].([]any)
+	if len(atts) != 1 || atts[0].(map[string]any)["content_id"] == nil || atts[0].(map[string]any)["inline"] != true {
+		t.Fatalf("attachments: %v", atts)
+	}
+	if !strings.Contains(body, "/api/v1/part?") || strings.Contains(body, "gone") {
+		t.Fatalf("body: %s", body)
+	}
+	_, page := c.do("GET", "/api/v1/messages?folder="+url.QueryEscape(ref["folder"].(string))+"&q=inline+test", nil)
+	for _, x := range page["messages"].([]any) {
+		if m := x.(map[string]any); m["uid"] == ref["uid"] && m["has_attachments"] == true {
+			t.Error("inline image must not mark the message as having attachments")
+		}
+	}
+
+	// Продолжение черновика: картинка по ссылке на часть прежней версии остаётся в письме.
+	src := regexp.MustCompile(`src="([^"]+)"`).FindStringSubmatch(body)[1]
+	draft, _ = json.Marshal(map[string]any{"subject": "inline test 2", "html": `<p>Снова: <img src="` + src + `"></p>`,
+		"draft_ref": ref})
+	st, d = c.multipartFields("/api/v1/drafts", string(draft), nil)
+	if st != 200 {
+		t.Fatalf("resave: %d %v", st, d)
+	}
+	ref2 := d["draft_ref"].(map[string]any)
+	m, body = view(ref2)
+	if atts := m["attachments"].([]any); len(atts) != 1 || !strings.Contains(body, "/api/v1/part?") {
+		t.Fatalf("resaved: %v %s", atts, body)
+	}
+	c.do("POST", "/api/v1/drafts/discard", ref2)
 }

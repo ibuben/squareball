@@ -107,7 +107,7 @@ try {
   await compose.locator('.field input').last().fill('Письмо из e2e-теста')
   await compose.locator('.ProseMirror').click()
   await page.keyboard.type('Привет! Это проверка отправки.')
-  await compose.locator('input[type=file]').setInputFiles({ name: 'отчёт.txt', mimeType: 'text/plain', buffer: Buffer.from('данные') })
+  await compose.locator('input[type=file]:not([data-test=inline-image])').setInputFiles({ name: 'отчёт.txt', mimeType: 'text/plain', buffer: Buffer.from('данные') })
   await compose.getByRole('button', { name: 'Отправить' }).click()
   await page.getByText('Письмо отправлено').last().waitFor()
   step('новое письмо с вложением отправлено')
@@ -426,17 +426,66 @@ try {
   await page.locator('iframe[sandbox="allow-same-origin allow-modals"]').waitFor({ state: 'attached' })
   step('печать: готовится отдельный документ письма')
 
+  // Шаблон ответа и картинка в тексте.
+  const tplName = `e2e шаблон ${stamp}`
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.nav .item', { hasText: 'Шаблоны ответов' }).click()
+  await page.locator('[data-test=template-new]').click()
+  await page.locator('[data-test=template-name]').fill(tplName)
+  await page.locator('form.card .ProseMirror').click()
+  await page.keyboard.type('Текст из шаблона e2e.')
+  await page.locator('form.card').getByRole('button', { name: 'Сохранить' }).click()
+  await page.locator(`.row[data-template="${tplName}"]`).waitFor()
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+
+  const imgSubject = `Картинка e2e ${stamp}`
+  await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+  const idlg = page.getByRole('dialog').last()
+  await idlg.locator('.chips input').first().fill('bob@test.local')
+  await idlg.locator('.field input').last().fill(imgSubject)
+  await idlg.locator('.ProseMirror').click()
+  await idlg.locator('[data-test=compose-templates]').click()
+  await idlg.locator(`[data-template="${tplName}"]`).click()
+  // Красный квадрат 40×40 — нарисован в браузере, чтобы не держать файл в репозитории.
+  const png = Buffer.from(await page.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 40; c.height = 40
+    const g = c.getContext('2d'); g.fillStyle = '#d33'; g.fillRect(0, 0, 40, 40)
+    return c.toDataURL('image/png').split(',')[1]
+  }), 'base64')
+  await idlg.locator('[data-test=inline-image]').setInputFiles({ name: 'square.png', mimeType: 'image/png', buffer: png })
+  await idlg.locator('.ProseMirror img').waitFor()
+  await shot('17-compose-image-template')
+  await idlg.getByRole('button', { name: 'Отправить' }).click()
+  await page.getByText('Письмо отправлено').last().waitFor()
+  await page.locator('.item', { hasText: imgSubject }).waitFor({ timeout: 10000 })
+  await page.locator('.item', { hasText: imgSubject }).click()
+  const ibody = page.frameLocator('iframe.body')
+  await ibody.locator('img').waitFor()
+  const iw = await ibody.locator('img').evaluate((img) => img.complete ? img.naturalWidth : new Promise((r) => { img.onload = () => r(img.naturalWidth) }))
+  if (iw !== 40) throw new Error(`картинка в письме: ширина ${iw}`)
+  if (!(await ibody.locator('body').innerText()).includes('Текст из шаблона e2e.')) throw new Error('нет текста шаблона')
+  if (await page.locator('section.reading .file', { hasText: 'square.png' }).count()) throw new Error('картинка из текста попала во вложения')
+  await shot('18-inline-image')
+  step('шаблон вставлен, картинка ушла в тексте письма (cid) и показалась')
+
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.nav .item', { hasText: 'Шаблоны ответов' }).click()
+  page.once('dialog', (d) => d.accept())
+  await page.locator(`.row[data-template="${tplName}"]`).getByRole('button', { name: 'Удалить' }).click()
+  await page.locator(`.row[data-template="${tplName}"]`).waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
     page.locator('.folder', { hasText: 'Входящие' }).click(),
   ])
   await page.locator('.item').first().waitFor()
-  const before = await page.locator('.item').count()
+  const victim = await page.locator('.item').last().getAttribute('data-uid')
   await page.locator('.item').last().click()
   await page.keyboard.press('Delete')
   await page.getByText('Перемещено в корзину').waitFor()
-  const after = await page.locator('.item').count()
-  if (after !== before - 1) throw new Error(`после удаления ${after}, ожидалось ${before - 1}`)
+  // Список могли дозагрузить (во «Входящих» больше страницы) — проверяем само письмо.
+  await page.locator(`.item[data-uid="${victim}"]`).waitFor({ state: 'detached' })
   step('удаление в корзину')
 
   await page.evaluate(() => { localStorage.setItem('wm.theme', 'dark') })

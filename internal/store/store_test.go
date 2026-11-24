@@ -72,3 +72,41 @@ func TestMigrationsIdempotent(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestTemplatesAndPrefs(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	a, err := s.SaveTemplate(ctx, "a@x", Template{Name: " Спасибо ", HTML: "<p>Спасибо!</p>"})
+	if err != nil || a.ID == 0 || a.Name != "Спасибо" {
+		t.Fatalf("save: %+v %v", a, err)
+	}
+	s.SaveTemplate(ctx, "a@x", Template{Name: "Адрес", HTML: "<p>ул. Ленина</p>"})
+	s.SaveTemplate(ctx, "b@x", Template{Name: "Чужой"})
+	list, _ := s.Templates(ctx, "a@x")
+	if len(list) != 2 || list[0].Name != "Адрес" {
+		t.Fatalf("list: %+v", list)
+	}
+	if _, err := s.SaveTemplate(ctx, "b@x", Template{ID: a.ID, Name: "взлом"}); err != ErrNotFound {
+		t.Errorf("foreign update: %v", err)
+	}
+	if err := s.DeleteTemplate(ctx, "b@x", a.ID); err != ErrNotFound {
+		t.Errorf("foreign delete: %v", err)
+	}
+	if err := s.DeleteTemplate(ctx, "a@x", a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPrefs(ctx, "a@x", map[string]string{"k": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.Pref(ctx, "a@x", "k"); v != "v" {
+		t.Errorf("pref: %q", v)
+	}
+	s.SetPrefs(ctx, "a@x", map[string]string{"k": ""})
+	if p, _ := s.Prefs(ctx, "a@x"); len(p) != 0 {
+		t.Errorf("pref not cleared: %v", p)
+	}
+	s.DeleteMailbox(ctx, "a@x")
+	if list, _ := s.Templates(ctx, "a@x"); len(list) != 0 {
+		t.Errorf("templates survive DeleteMailbox: %v", list)
+	}
+}

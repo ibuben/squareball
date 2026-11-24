@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { BookOpen, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
+import { BookOpen, FileText, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
 import { applyTheme, loadPrefs, savePrefs, state } from '../store'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
 import VacationSettings from './settings/VacationSettings.vue'
 import PasswordSettings from './settings/PasswordSettings.vue'
 import FoldersSettings from './settings/FoldersSettings.vue'
+import TemplatesSettings from './settings/TemplatesSettings.vue'
 
-type Section = 'identities' | 'reading' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
+type Section = 'identities' | 'templates' | 'reading' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
 const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean }[] = [
   { id: 'identities', label: 'Отправители и подписи', icon: UserRound },
+  { id: 'templates', label: 'Шаблоны ответов', icon: FileText },
   { id: 'reading', label: 'Чтение писем', icon: BookOpen },
   { id: 'folders', label: 'Папки', icon: FolderTree },
   { id: 'filters', label: 'Фильтры', icon: Filter, sieve: true },
@@ -44,6 +46,7 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
     </nav>
     <div class="content scroll">
       <IdentitiesSettings v-if="current === 'identities'" />
+      <TemplatesSettings v-else-if="current === 'templates'" />
       <section v-else-if="current === 'reading'">
         <h2>Чтение писем</h2>
         <div class="card">

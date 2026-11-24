@@ -89,3 +89,50 @@ func TestRecipientsDeduplicated(t *testing.T) {
 		t.Errorf("recipients = %v", r)
 	}
 }
+
+func TestBuildInlineImages(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfake")
+	for _, withAtt := range []bool{false, true} {
+		d := &Draft{From: Address{Email: "bob@test.local"}, To: []Address{{Email: "a@test.local"}}, Subject: "img",
+			HTML:   `<p>Смотри: <img src="cid:i1.abc@test.local"></p>`,
+			Inline: []Upload{{Filename: "photo.png", ContentType: "image/png", Data: png, ContentID: "i1.abc@test.local"}}}
+		if withAtt {
+			d.Attachments = []Upload{{Filename: "отчёт.txt", ContentType: "text/plain", Data: []byte("x")}}
+		}
+		raw, _, err := Build(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []Attachment
+		var html string
+		if _, err := walkParts(raw, func(_ int, att Attachment, isBody bool, ctype string, body io.Reader) (bool, error) {
+			b, _ := io.ReadAll(body)
+			if isBody && ctype == "text/html" {
+				html = string(b)
+			}
+			if !isBody {
+				att.Size = len(b)
+				got = append(got, att)
+			}
+			return false, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(html, "cid:i1.abc@test.local") {
+			t.Errorf("html: %q", html)
+		}
+		want := 1
+		if withAtt {
+			want = 2
+		}
+		if len(got) != want || got[0].ContentID != "i1.abc@test.local" || !got[0].Inline || got[0].Size != len(png) {
+			t.Errorf("parts (att=%v): %+v", withAtt, got)
+		}
+		if withAtt && (got[1].Filename != "отчёт.txt" || got[1].Inline) {
+			t.Errorf("attachment: %+v", got[1])
+		}
+		if !strings.Contains(string(raw), "multipart/related") {
+			t.Error("no multipart/related")
+		}
+	}
+}

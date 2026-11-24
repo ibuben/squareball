@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronDown, ChevronUp, Maximize2, Minimize2, Minus, Paperclip, Send, SlidersHorizontal, Trash2, X } from 'lucide-vue-next'
+import {
+  ChevronDown, ChevronUp, FileText, Maximize2, Minimize2, Minus, Paperclip, Save, Send, SlidersHorizontal, Trash2, X,
+} from 'lucide-vue-next'
 import { api, ApiError, type Address, type Attachment, type MsgRef } from '../api'
 import { size } from '../format'
 import { t } from '../i18n'
 import AddressInput from './AddressInput.vue'
 import RichEditor from './RichEditor.vue'
-import { closeCompose, loadFolders, loadList, state, toast, unsaved, type ComposeInit } from '../store'
+import { closeCompose, loadFolders, loadList, loadTemplates, state, toast, unsaved, type ComposeInit } from '../store'
 
 const props = defineProps<{ id: number; init: ComposeInit; index: number }>()
 
@@ -46,6 +48,32 @@ const priority = ref<0 | 1 | 5>(props.init.priority ?? 0)
 const readReceipt = ref(props.init.readReceipt ?? false)
 const dsn = ref(props.init.dsn ?? false)
 const optionsOpen = ref(false)
+
+// Шаблоны ответов: вставка в позицию курсора и сохранение текущего текста как шаблона.
+const templatesOpen = ref(false)
+function toggleTemplates() {
+  templatesOpen.value = !templatesOpen.value
+  optionsOpen.value = false
+  if (templatesOpen.value) void loadTemplates()
+}
+function insertTemplate(html: string) {
+  templatesOpen.value = false
+  editor.value?.insertHTML(html)
+  touch()
+}
+async function saveAsTemplate() {
+  templatesOpen.value = false
+  if (editor.value?.isEmpty()) { toast('Текст письма пуст'); return }
+  const name = prompt('Название шаблона', subject.value)
+  if (!name?.trim()) return
+  try {
+    await api.saveTemplate({ name: name.trim(), html: editor.value?.getHTML() ?? '' })
+    void loadTemplates()
+    toast(`Шаблон «${name.trim()}» сохранён`)
+  } catch (e) {
+    toast(e instanceof ApiError && e.code === 'template.too_large' ? 'Шаблон слишком большой' : t('toast.error'))
+  }
+}
 const optionsCount = computed(() => (priority.value ? 1 : 0) + (readReceipt.value ? 1 : 0) + (dsn.value ? 1 : 0))
 const minimized = ref(false)
 const maximized = ref(false)
@@ -99,11 +127,31 @@ function removeQuote() { quote.value = ''; touch() }
 function removeFile(i: number) { files.value.splice(i, 1); touch() }
 function removeExisting(i: number) { existing.value.splice(i, 1); touch() }
 
+// Картинки из редактора (data:) уходят файлами "inline:<метка>", в HTML — src="cid:<метка>".
+// Ссылки на картинки, уже лежащие в почте (/api/v1/part?…), сервер забирает сам.
+function extractInline(html: string, form: FormData): string {
+  if (!html.includes('data:image/')) return html
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  let n = 0
+  for (const img of Array.from(doc.querySelectorAll('img[src^="data:image/"]'))) {
+    const m = /^data:(image\/[a-z+.-]+);base64,(.*)$/i.exec(img.getAttribute('src') ?? '')
+    if (!m) { img.remove(); continue }
+    const bin = atob(m[2])
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    const token = `i${++n}`
+    const ext = m[1].split('/')[1].replace('jpeg', 'jpg')
+    form.append(`inline:${token}`, new Blob([bytes], { type: m[1] }), img.getAttribute('alt') || `image${n}.${ext}`)
+    img.setAttribute('src', `cid:${token}`)
+  }
+  return doc.body.innerHTML
+}
+
 function buildForm(): FormData {
   const form = new FormData()
   form.append('draft', JSON.stringify({
     to: to.value, cc: cc.value, bcc: bcc.value, subject: subject.value,
-    html: bodyHTML(), in_reply_to: props.init.inReplyTo ?? '',
+    html: extractInline(bodyHTML(), form), in_reply_to: props.init.inReplyTo ?? '',
     references: props.init.references ?? [], source: props.init.source ?? null,
     draft_ref: draftRef.value ?? null, keep_attachments: existing.value.map((a) => a.index),
     identity_id: identityId.value ?? 0,
@@ -254,8 +302,19 @@ async function discard() {
       <footer>
         <button class="btn primary" :disabled="sending" @click="send"><Send :size="15" /> {{ t('compose.send') }}</button>
         <span class="opts-wrap">
+          <button type="button" class="icon-btn" title="Шаблоны" aria-label="Шаблоны" data-test="compose-templates"
+                  @click="toggleTemplates"><FileText :size="16" /></button>
+          <div v-if="templatesOpen" class="opts tpl" role="menu" aria-label="Шаблоны">
+            <button v-for="tpl in state.templates" :key="tpl.id" type="button" role="menuitem" class="tpl-item"
+                    :data-template="tpl.name" @click="insertTemplate(tpl.html)">{{ tpl.name }}</button>
+            <p v-if="!state.templates.length" class="faint">Шаблонов нет. Их можно завести в настройках.</p>
+            <hr />
+            <button type="button" role="menuitem" class="tpl-item" @click="saveAsTemplate"><Save :size="14" /> Сохранить текст как шаблон</button>
+          </div>
+        </span>
+        <span class="opts-wrap">
           <button type="button" class="icon-btn" :class="{ active: optionsCount }" title="Параметры отправки"
-                  aria-label="Параметры отправки" data-test="compose-options" @click="optionsOpen = !optionsOpen">
+                  aria-label="Параметры отправки" data-test="compose-options" @click="optionsOpen = !optionsOpen; templatesOpen = false">
             <SlidersHorizontal :size="16" /><span v-if="optionsCount" class="badge">{{ optionsCount }}</span>
           </button>
           <div v-if="optionsOpen" class="opts" role="group" aria-label="Параметры отправки">
@@ -322,4 +381,10 @@ footer { display: flex; align-items: center; gap: 8px; padding: 10px 12px; borde
   background: var(--pane); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
 .opts label { display: grid; gap: 4px; color: var(--text-2); font-size: 13px; }
 .opts label.check { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.opts.tpl { gap: 2px; padding: 6px; max-height: 320px; overflow: auto; }
+.opts.tpl p { margin: 4px 6px; font-size: 13px; }
+.opts.tpl hr { width: 100%; border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+.tpl-item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 0; border-radius: 6px; background: none;
+  text-align: left; color: var(--text); }
+.tpl-item:hover { background: var(--hover); }
 </style>

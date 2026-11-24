@@ -257,6 +257,7 @@ func (s *Store) DeleteMailbox(ctx context.Context, mailbox string) error {
 		`DELETE FROM contact_groups WHERE mailbox = ?`,
 		`DELETE FROM collected WHERE mailbox = ?`,
 		`DELETE FROM prefs WHERE mailbox = ?`,
+		`DELETE FROM templates WHERE mailbox = ?`,
 	} {
 		if _, err := s.db.ExecContext(ctx, q, mailbox); err != nil {
 			return err

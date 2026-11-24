@@ -55,6 +55,7 @@ export interface Group { id: number; name: string; count: number }
 export interface Collected { email: string; name: string; uses: number; last_used: string }
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
+export interface Template { id: number; name: string; html: string }
 export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never' }
 
 export interface PasswordPolicy {
@@ -158,6 +159,9 @@ export const api = {
   deleteGroup: (id: number) => request('POST', '/api/v1/groups/delete', { id }),
   passwordPolicy: () => request<{ policy: PasswordPolicy }>('GET', '/api/v1/account/password'),
   changePassword: (current: string, next: string) => request('POST', '/api/v1/account/password', { current, new: next }),
+  templates: () => request<{ templates: Template[] }>('GET', '/api/v1/templates'),
+  saveTemplate: (tpl: Partial<Template>) => request<Template>('POST', '/api/v1/templates', tpl),
+  deleteTemplate: (id: number) => request('POST', '/api/v1/templates/delete', { id }),
   sieve: () => request<SieveState>('GET', '/api/v1/sieve'),
   putSieve: (body: { mode: 'rules' | 'raw'; tag: string; ruleset?: Ruleset; raw?: string }) =>
     request<SieveState>('PUT', '/api/v1/sieve', body),

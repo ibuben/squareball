@@ -43,6 +43,7 @@ func (s *Server) routes(static http.Handler) {
 	s.contactRoutes()
 	s.folderRoutes()
 	s.prefRoutes()
+	s.templateRoutes()
 	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
 	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
 	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))
@@ -485,9 +486,6 @@ func (s *Server) readCompose(w http.ResponseWriter, r *http.Request, forDraft bo
 	if in.Priority == 1 || in.Priority == 5 {
 		d.Priority = in.Priority
 	}
-	if in.HTML != "" {
-		d.HTML = sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML
-	}
 	if err := s.applyIdentity(r, in.IdentityID, d); err != nil {
 		s.storeError(w, err)
 		return nil, nil, false
@@ -529,6 +527,17 @@ func (s *Server) readCompose(w http.ResponseWriter, r *http.Request, forDraft bo
 			writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
 			return nil, nil, false
 		}
+	}
+	if in.HTML != "" {
+		html, inline, size, ok := s.inlineImages(w, r, in.HTML)
+		if !ok {
+			return nil, nil, false
+		}
+		if total += size; total > maxUpload {
+			writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
+			return nil, nil, false
+		}
+		d.HTML, d.Inline = html, inline
 	}
 	return &in, d, true
 }

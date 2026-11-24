@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onBeforeUnmount } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
+import Image from '@tiptap/extension-image'
 import {
-  Bold, Italic, Link as LinkIcon, List, ListOrdered, Quote, Redo2, RemoveFormatting, Strikethrough, Underline, Undo2,
+  Bold, ImagePlus, Italic, Link as LinkIcon, List, ListOrdered, Quote, Redo2, RemoveFormatting, Strikethrough, Underline, Undo2,
 } from 'lucide-vue-next'
 
 // Редактор текста письма. Цитата исходного письма в него не попадает:
@@ -12,11 +13,61 @@ import {
 const props = defineProps<{ content: string; placeholder?: string }>()
 const emit = defineEmits<{ change: []; files: [files: File[]]; submit: [] }>()
 
-function takeFiles(list?: FileList | null): boolean {
+// Картинки (PNG, JPEG, GIF, WebP) встают в текст, остальные файлы — во вложения.
+const INLINE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+const MAX_SIDE = 2000 // крупные фото уменьшаем: в письме они всё равно показываются в ширину окна
+
+function readDataURL(f: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(f)
+  })
+}
+
+async function toDataURL(f: File): Promise<string> {
+  const url = await readDataURL(f)
+  if (f.type === 'image/gif') return url // анимацию не трогаем
+  const img = new window.Image()
+  img.src = url
+  try { await img.decode() } catch { return url }
+  const k = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight))
+  if (k >= 1) return url
+  const c = document.createElement('canvas')
+  c.width = Math.round(img.naturalWidth * k)
+  c.height = Math.round(img.naturalHeight * k)
+  c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height)
+  return f.type === 'image/png' ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.88)
+}
+
+async function insertImages(files: File[], pos?: number) {
+  const e = editor.value
+  if (!e) return
+  for (const f of files) {
+    const src = await toDataURL(f)
+    const chain = e.chain().focus()
+    if (pos !== undefined) chain.insertContentAt(pos, { type: 'image', attrs: { src, alt: f.name } })
+    else chain.setImage({ src, alt: f.name })
+    chain.run()
+  }
+}
+
+function takeFiles(list?: FileList | null, pos?: number): boolean {
   const files = Array.from(list ?? [])
   if (!files.length) return false
-  emit('files', files)
+  const images = files.filter((f) => INLINE_TYPES.includes(f.type))
+  const others = files.filter((f) => !INLINE_TYPES.includes(f.type))
+  if (others.length) emit('files', others)
+  if (images.length) void insertImages(images, pos)
   return true
+}
+
+const picker = ref<HTMLInputElement>()
+function pickImages(e: Event) {
+  const input = e.target as HTMLInputElement
+  takeFiles(input.files)
+  input.value = ''
 }
 
 const editor = useEditor({
@@ -28,11 +79,16 @@ const editor = useEditor({
       link: { openOnClick: false, autolink: true, defaultProtocol: 'https', protocols: ['mailto'] },
     }),
     Placeholder.configure({ placeholder: props.placeholder ?? '' }),
+    Image.configure({ allowBase64: true, HTMLAttributes: { style: 'max-width:100%;height:auto' } }),
   ],
   editorProps: {
     attributes: { class: 'rich', spellcheck: 'true' },
     // Файлы, брошенные или вставленные в текст, становятся вложениями.
-    handleDrop: (_view, event) => takeFiles((event as DragEvent).dataTransfer?.files),
+    handleDrop: (view, event) => {
+      const ev = event as DragEvent
+      const pos = view.posAtCoords({ left: ev.clientX, top: ev.clientY })?.pos
+      return takeFiles(ev.dataTransfer?.files, pos)
+    },
     handlePaste: (_view, event) => takeFiles(event.clipboardData?.files),
     handleKeyDown: (_view, event) => {
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { emit('submit'); return true }
@@ -67,6 +123,7 @@ const buttons = (): Btn[] => {
     { icon: ListOrdered, title: 'Нумерованный список', run: () => e.chain().focus().toggleOrderedList().run(), active: () => e.isActive('orderedList') },
     { icon: Quote, title: 'Цитата', run: () => e.chain().focus().toggleBlockquote().run(), active: () => e.isActive('blockquote') },
     { icon: LinkIcon, title: 'Ссылка', run: setLink, active: () => e.isActive('link') },
+    { icon: ImagePlus, title: 'Картинка в текст', run: () => picker.value?.click() },
     { icon: RemoveFormatting, title: 'Очистить форматирование', run: () => e.chain().focus().unsetAllMarks().clearNodes().run() },
     { icon: Undo2, title: 'Отменить (Ctrl+Z)', run: () => e.chain().focus().undo().run() },
     { icon: Redo2, title: 'Повторить (Ctrl+Shift+Z)', run: () => e.chain().focus().redo().run() },
@@ -78,6 +135,7 @@ defineExpose({
   isEmpty: () => editor.value?.isEmpty ?? true,
   focusStart: () => editor.value?.commands.focus('start'),
   focusEnd: () => editor.value?.commands.focus('end'),
+  insertHTML: (html: string) => editor.value?.chain().focus().insertContent(html).run(),
 })
 </script>
 
@@ -89,6 +147,8 @@ defineExpose({
       <component :is="b.icon" :size="15" />
     </button>
   </div>
+  <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
+         data-test="inline-image" @change="pickImages" />
   <EditorContent :editor="editor" class="editor-host scroll" />
 </template>
 
@@ -100,6 +160,8 @@ defineExpose({
 .editor-host :deep(.rich p) { margin: 0 0 8px; }
 .editor-host :deep(.rich blockquote) { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--text-2); }
 .editor-host :deep(.rich a) { color: var(--accent); }
+.editor-host :deep(.rich img) { max-width: 100%; height: auto; border-radius: 4px; }
+.editor-host :deep(.rich img.ProseMirror-selectednode) { outline: 2px solid var(--accent); }
 .editor-host :deep(.rich p.is-editor-empty:first-child::before) {
   content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: var(--text-3);
 }

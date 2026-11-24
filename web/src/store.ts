@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import {
   api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Identity, type Me, type MessageView, type MsgRef,
-  type Prefs, type Summary,
+  type Prefs, type Summary, type Template,
 } from './api'
 import { t } from './i18n'
 
@@ -42,6 +42,7 @@ export const state = reactive({
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
   prefs: { archive_structure: '', mdn_mode: '' } as Prefs,
+  templates: [] as Template[],
 })
 
 export async function loadIdentities() {
@@ -50,6 +51,10 @@ export async function loadIdentities() {
     state.identities = r.identities
     state.identityLevel = r.level
   } catch (e) { reportError(e) }
+}
+
+export async function loadTemplates() {
+  try { state.templates = (await api.templates()).templates } catch (e) { reportError(e) }
 }
 
 export async function loadPrefs() {

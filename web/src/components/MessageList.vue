@@ -81,7 +81,7 @@ function onSearch() {
       <p v-if="!state.loadingList && !state.messages.length" class="empty faint">{{ t('list.empty') }}</p>
       <template v-for="g in groups" :key="g.label">
         <div class="group">{{ g.label }}</div>
-        <article v-for="m in g.items" :key="m.uid" class="item"
+        <article v-for="m in g.items" :key="m.uid" class="item" :data-uid="m.uid"
                  :class="{ unread: !m.seen, selected: state.selected.has(m.uid), current: m.uid === state.currentUID }"
                  draggable="true" tabindex="0"
                  @click="onClick($event, m)" @keydown.enter="openMessage(m.uid)"
