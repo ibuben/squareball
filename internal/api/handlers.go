@@ -25,6 +25,7 @@ import (
 func (s *Server) routes(static http.Handler) {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/config", s.handleConfig)
+	m.HandleFunc("GET /brand/{name}", s.handleBrandAsset)
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	m.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	m.HandleFunc("POST /api/v1/auth/logout", s.authed(s.handleLogout))
@@ -59,19 +60,6 @@ func (s *Server) routes(static http.Handler) {
 	if static != nil {
 		m.Handle("/", static)
 	}
-}
-
-func (s *Server) brandFor(r *http.Request) ext.Brand {
-	s.mu.RLock()
-	bp := s.brand
-	s.mu.RUnlock()
-	if bp != nil {
-		if b, err := bp.Brand(r.Context(), r.Host); err == nil {
-			return b
-		}
-	}
-	ub := s.cfg.UI.Brand
-	return ext.Brand{Name: ub.Name, LogoURL: ub.LogoURL, CSSVars: ub.CSSVars}
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

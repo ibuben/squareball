@@ -63,6 +63,27 @@ smtp:
 
 Полный список ключей — `internal/config/config.go` (`Defaults`).
 
+### Брендинг
+
+Название, логотип и цвета задаются секцией `ui.brand`:
+
+```yaml
+ui:
+  brand:
+    name: Почта Ромашки
+    logo_file: /etc/webmail/brand/logo.svg       # или logo_url: https://…
+    logo_dark_file: /etc/webmail/brand/logo-dark.svg
+    favicon_file: /etc/webmail/brand/favicon.png
+    accent: "#0b7a5c"                            # accent_dark — для тёмной темы
+```
+
+Файлы (svg/png/jpg/webp/gif/ico, до 1 МиБ) читаются при старте и раздаются по
+`/brand/logo`, `/brand/logo-dark`, `/brand/favicon` с долгим кешем; после замены
+файла нужен перезапуск. Из `accent` интерфейс сам считает фон выделения и цвет
+текста на кнопках для светлой и тёмной темы; `css_vars` переопределяет любые
+переменные из `web/src/styles.css`. Адаптер может отдавать бренд по хосту через
+`ext.BrandProvider` — его непустые поля перекрывают конфиг.
+
 Данные пользователей (отправители, подписи, контакты) лежат в SQLite: под systemd —
 `/var/lib/webmail/webmail.db`, иначе — `./webmail.db` (или путь из `storage.dsn_file`).
 Фильтры включаются секцией `sieve: {enabled: true}`; хост по умолчанию — `imap.host`.

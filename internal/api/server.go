@@ -47,7 +47,9 @@ type Server struct {
 	pwName    string
 	pwChanger ext.PasswordChanger
 	brand     ext.BrandProvider
-	masterPw  string
+	// brandAssets — файлы ui.brand.*_file, прочитанные при старте; ключ — имя в /brand/.
+	brandAssets map[string]brandAsset
+	masterPw    string
 
 	pwnedClient *http.Client // проверка пароля по базе утечек (password.policy.check_breached)
 
@@ -113,6 +115,9 @@ func New(o Options) (*Server, error) {
 		}
 		s.masterPw = string(b)
 	}
+	if s.brandAssets, err = loadBrandAssets(&cfg.UI.Brand); err != nil {
+		return nil, err
+	}
 	s.initSpell()
 	s.routes(o.Static)
 	return s, nil
@@ -127,7 +132,7 @@ func (s *Server) Handle(pattern string, h http.Handler) {
 	if i := strings.IndexByte(p, ' '); i >= 0 {
 		p = p[i+1:]
 	}
-	if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/assets/") {
+	if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/brand/") {
 		panic("adapter route " + pattern + " uses a reserved prefix")
 	}
 	s.mux.Handle(pattern, h)

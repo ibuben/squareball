@@ -6,6 +6,7 @@ import LoginView from './components/LoginView.vue'
 import MailView from './components/MailView.vue'
 // Окно письма с редактором (TipTap/ProseMirror) грузится отдельным чанком при первом открытии.
 const ComposeWindow = defineAsyncComponent(() => import('./components/ComposeWindow.vue'))
+import { restoreBrand } from './brand'
 import { applyTheme, boot, setMe, state, toast, unsaved } from './store'
 
 setUnauthorizedHandler(() => {
@@ -19,6 +20,7 @@ window.addEventListener('beforeunload', (e) => { if (unsaved.size) e.preventDefa
 
 onMounted(() => {
   applyTheme()
+  restoreBrand()
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme)
   void boot()
 })

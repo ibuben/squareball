@@ -97,11 +97,17 @@ type PasswordChanger interface {
 	Change(ctx context.Context, req PasswordChange) error
 }
 
-// Brand — оформление: имя, логотип и CSS-переменные темы.
+// Brand — оформление: имя, логотипы, favicon, цвет акцента и CSS-переменные темы.
+// Провайдер может заполнить только часть полей: пустые берутся из ui.brand конфига,
+// CSSVars дополняют конфиговые. Accent и AccentDark — hex-цвета (#rgb, #rrggbb).
 type Brand struct {
-	Name    string            `json:"name"`
-	LogoURL string            `json:"logo_url,omitempty"`
-	CSSVars map[string]string `json:"css_vars,omitempty"`
+	Name        string            `json:"name"`
+	LogoURL     string            `json:"logo_url,omitempty"`
+	LogoDarkURL string            `json:"logo_dark_url,omitempty"`
+	FaviconURL  string            `json:"favicon_url,omitempty"`
+	Accent      string            `json:"accent,omitempty"`
+	AccentDark  string            `json:"accent_dark,omitempty"`
+	CSSVars     map[string]string `json:"css_vars,omitempty"`
 }
 
 type BrandProvider interface {

@@ -3,13 +3,14 @@ import { onMounted, ref } from 'vue'
 import { Mail } from 'lucide-vue-next'
 import { api, ApiError, type Brand } from '../api'
 import { t } from '../i18n'
-import { applyBrand, setMe } from '../store'
+import { applyBrand, brandLogo, restoreBrand } from '../brand'
+import { setMe, state } from '../store'
 
 const username = ref('')
 const password = ref('')
 const error = ref('')
 const busy = ref(false)
-const brand = ref<Brand>({ name: '' })
+const brand = ref<Brand>(restoreBrand() ?? { name: '' })
 const domain = ref('')
 
 onMounted(async () => {
@@ -17,7 +18,7 @@ onMounted(async () => {
     const c = await api.config()
     brand.value = c.brand
     domain.value = c.default_domain
-    applyBrand(c.brand.css_vars)
+    applyBrand(c.brand)
     document.title = c.brand.name
   } catch { /* экран входа работает и без конфига */ }
 })
@@ -43,7 +44,7 @@ async function submit() {
   <main class="login">
     <form class="card" @submit.prevent="submit">
       <div class="logo">
-        <img v-if="brand.logo_url" :src="brand.logo_url" alt="" />
+        <img v-if="brandLogo(brand, state.dark)" :src="brandLogo(brand, state.dark)" alt="" />
         <Mail v-else :size="28" />
         <span>{{ brand.name }}</span>
       </div>

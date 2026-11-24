@@ -169,15 +169,125 @@ type UI struct {
 	DefaultLanguage string   `yaml:"default_language"`
 	Languages       []string `yaml:"languages"`
 	Theme           string   `yaml:"theme"`
-	Brand           struct {
-		Name    string            `yaml:"name"`
-		LogoURL string            `yaml:"logo_url"`
-		CSSVars map[string]string `yaml:"css_vars"`
-	} `yaml:"brand"`
-	Attachments struct {
+	Brand           Brand    `yaml:"brand"`
+	Attachments     struct {
 		MaxUpload    ByteSize `yaml:"max_upload"`
 		RemoteImages string   `yaml:"remote_images"` // ask | always | never
 	} `yaml:"attachments"`
+}
+
+// Brand — оформление интерфейса: название, логотипы, favicon и цвет акцента.
+// Картинка задаётся либо ссылкой (*_url), либо локальным файлом (*_file),
+// который сервер раздаёт сам по /brand/<имя>. accent — основной цвет (#rgb или
+// #rrggbb); производные оттенки (фон выделения, цвет текста на кнопке) интерфейс
+// считает сам. accent_dark — цвет для тёмной темы, по умолчанию выводится из accent.
+// css_vars — тонкая настройка: любые CSS-переменные поверх рассчитанных, в обеих темах.
+type Brand struct {
+	Name         string            `yaml:"name"`
+	LogoURL      string            `yaml:"logo_url"`
+	LogoFile     string            `yaml:"logo_file"`
+	LogoDarkURL  string            `yaml:"logo_dark_url"`
+	LogoDarkFile string            `yaml:"logo_dark_file"`
+	FaviconURL   string            `yaml:"favicon_url"`
+	FaviconFile  string            `yaml:"favicon_file"`
+	Accent       string            `yaml:"accent"`
+	AccentDark   string            `yaml:"accent_dark"`
+	CSSVars      map[string]string `yaml:"css_vars"`
+}
+
+// BrandAsset — картинка бренда: имя в /brand/<name>, ссылка и файл из конфига.
+type BrandAsset struct{ Name, Key, URL, File string }
+
+// Assets — картинки бренда в порядке logo, logo_dark, favicon.
+func (b *Brand) Assets() []BrandAsset {
+	return []BrandAsset{
+		{"logo", "logo", b.LogoURL, b.LogoFile},
+		{"logo-dark", "logo_dark", b.LogoDarkURL, b.LogoDarkFile},
+		{"favicon", "favicon", b.FaviconURL, b.FaviconFile},
+	}
+}
+
+// MaxBrandFile — предельный размер файла логотипа или favicon.
+const MaxBrandFile = 1 << 20
+
+// BrandFileTypes — допустимые расширения файлов бренда и их Content-Type.
+var BrandFileTypes = map[string]string{
+	".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
+}
+
+var (
+	hexColor   = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+	cssVarName = regexp.MustCompile(`^--[a-z0-9-]{1,64}$`)
+)
+
+// ValidCSSValue — значение CSS-переменной без символов, ломающих декларацию.
+func ValidCSSValue(v string) bool {
+	return v != "" && len(v) <= 200 && !strings.ContainsAny(v, ";{}<>\\\"'\n\r") &&
+		!strings.Contains(strings.ToLower(v), "url(")
+}
+
+// ValidHexColor — цвет вида #rgb или #rrggbb.
+func ValidHexColor(v string) bool { return hexColor.MatchString(v) }
+
+// ValidCSSVar — имя --lower-case и безопасное значение.
+func ValidCSSVar(k, v string) bool { return cssVarName.MatchString(k) && ValidCSSValue(v) }
+
+// ValidBrandURL — ссылка на картинку: https/http или путь от корня этого сайта.
+func ValidBrandURL(u string) bool {
+	if strings.HasPrefix(u, "/") {
+		return !strings.HasPrefix(u, "//")
+	}
+	p, err := url.Parse(u)
+	return err == nil && (p.Scheme == "https" || p.Scheme == "http") && p.Host != ""
+}
+
+func (b *Brand) validate(add func(string, ...any)) {
+	if strings.TrimSpace(b.Name) == "" || len(b.Name) > 64 {
+		add("ui.brand.name: required, at most 64 bytes")
+	}
+	for _, a := range b.Assets() {
+		if a.URL != "" && a.File != "" {
+			add("ui.brand: %s_url and %s_file are mutually exclusive", a.Key, a.Key)
+		}
+		if a.URL != "" && !ValidBrandURL(a.URL) {
+			add("ui.brand.%s_url: must be an http(s) URL or a path starting with /", a.Key)
+		}
+		if a.File != "" {
+			if err := checkBrandFile(a.File); err != nil {
+				add("ui.brand.%s_file: %v", a.Key, err)
+			}
+		}
+	}
+	for k, v := range map[string]string{"accent": b.Accent, "accent_dark": b.AccentDark} {
+		if v != "" && !hexColor.MatchString(v) {
+			add("ui.brand.%s: must be a hex color like #0b7a5c", k)
+		}
+	}
+	for k, v := range b.CSSVars {
+		if !cssVarName.MatchString(k) {
+			add("ui.brand.css_vars: bad variable name %q, want --lower-case", k)
+		} else if !ValidCSSValue(v) {
+			add("ui.brand.css_vars.%s: empty, too long or contains forbidden characters", k)
+		}
+	}
+}
+
+func checkBrandFile(path string) error {
+	if _, ok := BrandFileTypes[strings.ToLower(filepath.Ext(path))]; !ok {
+		return errors.New("unsupported type, want svg, png, jpg, webp, gif or ico")
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
+	if st.Size() > MaxBrandFile {
+		return fmt.Errorf("larger than %d bytes", MaxBrandFile)
+	}
+	return nil
 }
 
 // Spellcheck — проверка орфографии в редакторе письма.
@@ -386,6 +496,7 @@ func (c *Config) Validate() error {
 	if !contains([]string{"ask", "always", "never"}, c.UI.Attachments.RemoteImages) {
 		add("ui.attachments.remote_images: must be ask, always or never")
 	}
+	c.UI.Brand.validate(add)
 	if !contains([]string{"light", "dark", "system"}, c.UI.Theme) {
 		add("ui.theme: must be light, dark or system")
 	}

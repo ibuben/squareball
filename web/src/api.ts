@@ -1,7 +1,10 @@
 // Клиент внутреннего API BFF. CSRF-токен приходит при входе и в /auth/me.
 
 export interface Address { name?: string; email: string }
-export interface Brand { name: string; logo_url?: string; css_vars?: Record<string, string> }
+export interface Brand {
+  name: string; logo_url?: string; logo_dark_url?: string; favicon_url?: string
+  accent?: string; accent_dark?: string; css_vars?: Record<string, string>
+}
 export interface Me {
   mailbox: string
   csrf: string

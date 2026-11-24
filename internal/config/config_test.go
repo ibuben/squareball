@@ -179,3 +179,33 @@ func TestPasswordDriverValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestBrandValidation(t *testing.T) {
+	dir := t.TempDir()
+	logo := filepath.Join(dir, "logo.svg")
+	if err := os.WriteFile(logo, []byte("<svg/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ok := minimal + "ui:\n  brand:\n    name: Почта\n    logo_file: " + logo +
+		"\n    favicon_url: https://cdn.example.com/f.ico\n    accent: \"#0b7a5c\"\n    accent_dark: \"#3fb\"\n" +
+		"    css_vars: {\"--radius\": \"4px\"}\n"
+	if _, err := Load(write(t, ok)); err != nil {
+		t.Fatalf("valid brand rejected: %v", err)
+	}
+	for name, tc := range map[string]struct{ yaml, want string }{
+		"empty name":   {"name: \"\"", "ui.brand.name"},
+		"bad accent":   {"accent: green", "ui.brand.accent"},
+		"both logos":   {"logo_url: /l.svg\n    logo_file: " + logo, "mutually exclusive"},
+		"js url":       {"logo_url: javascript:alert(1)", "ui.brand.logo_url"},
+		"protocol rel": {"favicon_url: //evil.example/f.ico", "ui.brand.favicon_url"},
+		"missing file": {"logo_dark_file: " + filepath.Join(dir, "none.png"), "ui.brand.logo_dark_file"},
+		"bad type":     {"logo_file: " + write(t, "x"), "unsupported type"},
+		"bad var name": {"css_vars: {\"accent\": \"red\"}", "bad variable name"},
+		"css inject":   {"css_vars: {\"--accent\": \"red; background: url(x)\"}", "forbidden"},
+	} {
+		_, err := Load(write(t, minimal+"ui:\n  brand:\n    "+tc.yaml+"\n"))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: want error with %q, got %v", name, tc.want, err)
+		}
+	}
+}

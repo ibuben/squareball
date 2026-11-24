@@ -3,6 +3,7 @@ import {
   api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Identity, type Me, type MessageView, type MsgRef,
   type Prefs, type Summary, type Template,
 } from './api'
+import { applyBrand } from './brand'
 import { t } from './i18n'
 
 export interface ComposeInit {
@@ -37,12 +38,13 @@ export const state = reactive({
   composes: [] as { id: number; init: ComposeInit }[],
   toasts: [] as Toast[],
   theme: (localStorage.getItem('wm.theme') as 'light' | 'dark' | 'system') || 'system',
+  dark: false, // итоговая тема с учётом system
   showContact: localStorage.getItem('wm.contact') !== '0',
   view: 'mail' as 'mail' | 'settings' | 'contacts',
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
   prefs: { archive_structure: '', mdn_mode: '', threads: '', spell: '' } as Prefs,
-  expanded: new Set<number>(), // развёрнутые цепочки (uid головы)
+  expanded: loadExpanded(), // развёрнутые цепочки, см. threadKey
   templates: [] as Template[],
 })
 
@@ -81,20 +83,17 @@ export function applyTheme() {
   const dark = state.theme === 'dark' ||
     (state.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  state.dark = dark
+  applyBrand()
   try { localStorage.setItem('wm.theme', state.theme) } catch { /* приватный режим */ }
 }
 
-export function applyBrand(vars?: Record<string, string>) {
-  for (const [k, v] of Object.entries(vars ?? {})) {
-    if (/^--[a-z0-9-]+$/.test(k)) document.documentElement.style.setProperty(k, v)
-  }
-}
 
 export function setMe(me: Me | null) {
   state.me = me
   setCsrf(me?.csrf ?? '')
   if (me) {
-    applyBrand(me.brand.css_vars)
+    applyBrand(me.brand)
     document.title = `${me.mailbox} — ${me.brand.name}`
   }
 }
@@ -241,7 +240,6 @@ export async function loadList(append = false) {
       m.depth = m.thread.find((x) => x.uid === m.uid)?.depth // место головы в дереве
       m.thread = m.thread.map((x) => (x.uid === m.uid ? m : x))
     }
-    if (!append) state.expanded = new Set()
     state.messages = append ? [...state.messages, ...page.messages] : page.messages
     state.total = page.total
   } catch (e) { reportError(e) } finally { state.loadingList = false }
@@ -276,17 +274,35 @@ export const findSummary = (uid: number) => allSummaries().find((m) => m.uid ===
 
 // Строки, видимые в списке: свёрнутая цепочка — одной строкой, развёрнутая — всеми письмами.
 export function visibleRows(): Summary[] {
-  return state.messages.flatMap((m) => (m.thread && state.expanded.has(m.uid) ? m.thread : [m]))
+  return state.messages.flatMap((m) => (isExpanded(m) ? m.thread! : [m]))
 }
 
 // Голова цепочки, в которой лежит письмо.
 export const headOf = (uid: number) => state.messages.find((m) => threadOf(m).some((x) => x.uid === uid))
 
+// Развёрнутость цепочки привязана к её корню (первому письму дерева), а не к голове:
+// голова — самое новое письмо и меняется с каждым ответом. Состояние живёт до конца
+// сессии вкладки и переживает обновления списка, смену папки и перезагрузку.
+const threadKey = (head: Summary, folder = state.folder) => `${folder}\n${threadOf(head)[0].uid}`
+
+function loadExpanded(): Set<string> {
+  try { return new Set(JSON.parse(sessionStorage.getItem('wm.threads.open') ?? '[]') as string[]) } catch { return new Set() }
+}
+
+function setExpanded(s: Set<string>) {
+  // Старые записи вытесняются первыми: Set хранит порядок добавления.
+  const keep = [...s].slice(-500)
+  state.expanded = new Set(keep)
+  try { sessionStorage.setItem('wm.threads.open', JSON.stringify(keep)) } catch { /* приватный режим */ }
+}
+
+export const isExpanded = (head: Summary) => !!head.thread && state.expanded.has(threadKey(head))
+
 export function toggleThread(head: Summary) {
   const s = new Set(state.expanded)
-  if (s.has(head.uid)) s.delete(head.uid)
-  else s.add(head.uid)
-  state.expanded = s
+  const k = threadKey(head)
+  if (!s.delete(k)) s.add(k)
+  setExpanded(s)
 }
 
 export async function setThreads(on: boolean) {
@@ -318,7 +334,7 @@ function selectedUIDs(): number[] {
   const out = new Set<number>()
   for (const uid of base) {
     const head = state.messages.find((m) => m.uid === uid)
-    if (head?.thread && !state.expanded.has(head.uid)) head.thread.forEach((x) => out.add(x.uid))
+    if (head?.thread && !isExpanded(head)) head.thread.forEach((x) => out.add(x.uid))
     else out.add(uid)
   }
   return [...out]
@@ -341,10 +357,12 @@ function dropFromList(uids: number[]) {
     if (rest.length === m.thread.length) { heads.push(m); continue }
     // Новая голова — самое новое из оставшихся писем.
     const head = rest.reduce((a, b) => (new Date(b.date) > new Date(a.date) ? b : a))
-    if (head.uid !== m.uid && state.expanded.has(m.uid)) {
-      const s = new Set(state.expanded); s.delete(m.uid); s.add(head.uid); state.expanded = s
-    }
+    const oldKey = isExpanded(m) ? threadKey(m) : ''
     head.thread = rest.length > 1 ? rest : undefined
+    // Удалили корень — ключ цепочки сменился, переносим развёрнутость.
+    if (oldKey && head.thread && threadKey(head) !== oldKey) {
+      const s = new Set(state.expanded); s.delete(oldKey); s.add(threadKey(head)); setExpanded(s)
+    }
     heads.push(head)
   }
   state.messages = heads

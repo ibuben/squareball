@@ -15,6 +15,7 @@ import ContactPane from './ContactPane.vue'
 import {
   applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, visibleRows, openCompose, openFolder, openMessage, setMe, state,
 } from '../store'
+import { brandLogo } from '../brand'
 
 const reading = ref<InstanceType<typeof ReadingPane>>()
 const menu = ref(false)
@@ -136,7 +137,7 @@ onBeforeUnmount(() => {
     <header class="top">
       <button class="icon-btn burger" :aria-label="t('nav.mail')" @click="drawer = !drawer"><Menu :size="19" /></button>
       <div class="brand">
-        <img v-if="state.me?.brand.logo_url" :src="state.me.brand.logo_url" alt="" />
+        <img v-if="brandLogo(state.me?.brand, state.dark)" :src="brandLogo(state.me?.brand, state.dark)" alt="" />
         <Mail v-else :size="18" />
         <span>{{ state.me?.brand.name }}</span>
       </div>

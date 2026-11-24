@@ -76,7 +76,7 @@ async function saveAsTemplate() {
 }
 const optionsCount = computed(() => (priority.value ? 1 : 0) + (readReceipt.value ? 1 : 0) + (dsn.value ? 1 : 0))
 const minimized = ref(false)
-const maximized = ref(false)
+const maximized = ref(true) // новое письмо и ответ открываются развёрнутыми
 const dragging = ref(false)
 
 // Автосохранение: версия правок против сохранённой версии.
@@ -246,9 +246,9 @@ async function discard() {
 </script>
 
 <template>
-  <div class="compose" :class="{ min: minimized, max: maximized }" :style="{ right: `${16 + index * 24}px`, bottom: `${index * 24}px` }"
+  <div class="compose" :class="{ min: minimized, max: maximized && !minimized }" :style="{ right: `${16 + index * 24}px`, bottom: `${index * 24}px` }"
        role="dialog" :aria-label="t('compose.new')" @keydown.ctrl.enter="send" @keydown.meta.enter="send">
-    <header @dblclick="maximized = !maximized">
+    <header @dblclick="maximized = !maximized; minimized = false">
       <span class="ellipsis">{{ subject || t('compose.new') }}</span>
       <button class="icon-btn" @click="minimized = !minimized"><Minus :size="15" /></button>
       <button class="icon-btn" @click="maximized = !maximized; minimized = false">

@@ -41,11 +41,20 @@ smtp:
 #     require_classes: 3
 #     check_breached: false
 
+# Брендинг: название, логотип, favicon и цвет акцента. Картинка — ссылкой (*_url)
+# или файлом (*_file: svg/png/jpg/webp/gif/ico до 1 МиБ, сервер раздаёт его сам).
+# accent — основной цвет; оттенки выделения и цвет текста на кнопках считаются из него.
+# accent_dark — цвет для тёмной темы (по умолчанию — посветлевший accent).
+# css_vars — тонкая настройка любых CSS-переменных из web/src/styles.css, поверх расчёта.
 # ui:
 #   brand:
 #     name: "Почта"
-#     logo_url: /logo.svg
-#     css_vars: { "--accent": "#0b7a5c" }
+#     logo_file: /etc/webmail/brand/logo.svg
+#     logo_dark_file: /etc/webmail/brand/logo-dark.svg   # для тёмной темы
+#     favicon_file: /etc/webmail/brand/favicon.png
+#     accent: "#0b7a5c"
+#     accent_dark: "#3fb68f"
+#     css_vars: { "--radius": "6px" }
 
 # Проверка орфографии в редакторе: browser (по умолчанию) — средствами браузера;
 # hunspell — на сервере (apt install hunspell hunspell-ru hunspell-en-us),

@@ -6,23 +6,67 @@ import { dateGroup, listDate, who } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  archiveSelected, currentFolder, deleteSelected, folderTitle, headOf, loadList, setThreads, threadOf, toggleThread, visibleRows, openDraft, openMessage, roleFolder, setFlag, state,
+  archiveSelected, currentFolder, deleteSelected, folderTitle, headOf, isExpanded, loadList, setThreads, threadOf, toggleThread, visibleRows, openDraft, openMessage, roleFolder, setFlag, state,
 } from '../store'
 
 const sentLike = computed(() => ['sent', 'drafts'].includes(currentFolder()?.role ?? ''))
 
 // Строка списка: письмо и, если это голова свёрнутой цепочки или корень развёрнутой, — цепочка.
-interface Row { m: Summary; head?: Summary; collapsed: boolean; size: number }
+// tree — разметка веток для писем развёрнутой цепочки.
+interface Tree {
+  depth: number // уровень письма в дереве (0 — корень, у него аватар)
+  lines: boolean[] // по столбцам 0..depth-2: продолжается ли ветка предка ниже этой строки
+  more: boolean // ниже есть ещё ответы того же родителя (├ вместо └)
+  kids: boolean // у письма есть ответы: ветка уходит вниз из его узла
+}
+interface Row { m: Summary; head?: Summary; collapsed: boolean; size: number; tree?: Tree }
 const threads = computed(() => state.prefs.threads === 'on')
+const maxDepth = 6
 
-const rows = computed<Row[]>(() => visibleRows().map((m) => {
-  const head = m.thread ? m : undefined
-  if (head && !state.expanded.has(head.uid)) return { m, head, collapsed: true, size: head.thread!.length }
-  const h = threads.value ? headOf(m.uid) : undefined
-  // В развёрнутой цепочке переключатель — у её первого письма.
-  if (h?.thread && h.thread[0].uid === m.uid) return { m, head: h, collapsed: false, size: h.thread.length }
-  return { m, collapsed: false, size: 0 }
-}))
+// Ветки цепочки: письма идут в порядке обхода дерева, родитель раньше ответов.
+function treeOf(thread: Summary[]): Map<number, Tree> {
+  // Если корней несколько (общий предок не дошёл), остальные корни вешаем на первый.
+  const second = thread.findIndex((x, i) => i > 0 && !x.depth)
+  const d = thread.map((x, i) => (i === 0 ? 0 : Math.min((x.depth ?? 0) + (second > 0 && i >= second ? 1 : 0), maxDepth)))
+  // Продолжается ли ниже строки i ветка, идущая из столбца col (то есть будет ли ещё
+  // ответ уровня col+1 раньше, чем дерево поднимется до уровня col).
+  const continues = (i: number, col: number) => {
+    for (let j = i + 1; j < d.length; j++) {
+      if (d[j] <= col) return false
+      if (d[j] === col + 1) return true
+    }
+    return false
+  }
+  const out = new Map<number, Tree>()
+  thread.forEach((x, i) => out.set(x.uid, {
+    depth: d[i],
+    lines: Array.from({ length: Math.max(d[i] - 1, 0) }, (_, col) => continues(i, col)),
+    more: d[i] > 0 && continues(i, d[i] - 1),
+    kids: i + 1 < d.length && d[i + 1] > d[i],
+  }))
+  return out
+}
+
+const rows = computed<Row[]>(() => {
+  const trees = new Map<number, Map<number, Tree>>()
+  return visibleRows().map((m) => {
+    const head = m.thread ? m : undefined
+    if (head && !isExpanded(head)) return { m, head, collapsed: true, size: head.thread!.length }
+    const h = threads.value ? headOf(m.uid) : undefined
+    if (!h?.thread) return { m, collapsed: false, size: 0 }
+    if (!trees.has(h.uid)) trees.set(h.uid, treeOf(h.thread))
+    const tree = trees.get(h.uid)!.get(m.uid)
+    // В развёрнутой цепочке переключатель — у её первого письма.
+    if (h.thread[0].uid === m.uid) return { m, head: h, collapsed: false, size: h.thread.length, tree }
+    return { m, collapsed: false, size: 0, tree }
+  })
+})
+
+// Геометрия веток, px: столбец 0 — под центром аватара корня, дальше шаг step.
+const step = 16
+const col0 = 17
+const colX = (c: number) => col0 + c * step
+const treeWidth = (t: Tree) => colX(t.depth) + 10
 
 // Свёрнутая цепочка показывает сводку: непрочитанное, флаг, вложения — по всем письмам.
 const any = (r: Row, f: (m: Summary) => boolean) => (r.collapsed && r.head ? threadOf(r.head).some(f) : f(r.m))
@@ -103,15 +147,24 @@ function onSearch() {
       <p v-if="!state.loadingList && !state.messages.length" class="empty faint">{{ t('list.empty') }}</p>
       <template v-for="g in groups" :key="g.label">
         <div class="group">{{ g.label }}</div>
-        <article v-for="{ m, head, collapsed, size } in g.items" :key="m.uid" class="item" :data-uid="m.uid"
+        <article v-for="{ m, head, collapsed, size, tree } in g.items" :key="m.uid" class="item" :data-uid="m.uid"
                  :class="{ unread: any({ m, head, collapsed, size }, (x) => !x.seen), selected: state.selected.has(m.uid),
-                           current: m.uid === state.currentUID, member: threads && !head && !!headOf(m.uid)?.thread }"
-                 :style="m.depth && !collapsed ? { paddingLeft: `${14 + Math.min(m.depth, 6) * 14}px` } : undefined"
+                           current: m.uid === state.currentUID, member: !!tree, reply: !!tree?.depth }"
                  draggable="true" tabindex="0"
                  @click="onClick($event, m)" @keydown.enter="openMessage(m.uid)"
                  @dblclick="currentFolder()?.role === 'drafts' && openDraft(m.uid)"
                  @dragstart="onDragStart($event, m)">
-          <Avatar :addr="sentLike ? m.to[0] : m.from[0]" :size="34" />
+          <div v-if="tree?.depth" class="tree" :style="{ width: `${treeWidth(tree)}px` }" aria-hidden="true">
+            <i v-for="(on, c) in tree.lines" v-show="on" :key="c" class="v" :style="{ left: `${colX(c)}px` }" />
+            <i class="v" :class="tree.more ? '' : 'half'" :style="{ left: `${colX(tree.depth - 1)}px` }" />
+            <i class="h" :style="{ left: `${colX(tree.depth - 1) + 2}px`, width: `${step - 4}px` }" />
+            <i v-if="tree.kids" class="v down" :style="{ left: `${colX(tree.depth)}px` }" />
+            <i class="dot" :style="{ left: `${colX(tree.depth)}px` }" />
+          </div>
+          <template v-else>
+            <Avatar :addr="sentLike ? m.to[0] : m.from[0]" :size="34" />
+            <i v-if="tree?.kids" class="stem" aria-hidden="true" />
+          </template>
           <div class="main">
             <div class="row1">
               <span class="from ellipsis">{{ sentLike ? (who(m.to[0]) || '—') : who(m.from[0]) }}</span>
@@ -146,7 +199,8 @@ function onSearch() {
 </template>
 
 <style scoped>
-.messages { display: flex; flex-direction: column; min-width: 0; background: var(--pane); }
+.messages { display: flex; flex-direction: column; min-width: 0; background: var(--pane);
+  --thread-line: color-mix(in srgb, var(--text-2) 75%, transparent); }
 .head { padding: 12px 12px 8px; display: grid; gap: 10px; border-bottom: 1px solid var(--border); }
 .title { display: flex; align-items: baseline; gap: 8px; }
 h2 { margin: 0; font-size: 17px; }
@@ -174,6 +228,22 @@ h2 { margin: 0; font-size: 17px; }
   border: 1px solid var(--border); border-radius: 10px; background: var(--pane); color: var(--text-2); font-size: 12px; }
 .thread-toggle:hover, .thread-toggle.open { border-color: var(--accent); color: var(--accent); }
 .item.member { background: color-mix(in srgb, var(--pane-alt) 60%, transparent); }
+.item.reply { padding-top: 6px; padding-bottom: 6px; }
+/* Ветки цепочки: линии на всю высоту строки, чтобы соседние строки сливались в дерево. */
+/* Линии — пунктир: штрих 3px, просвет 2px; одинаковые по вертикали и горизонтали; координаты целые,
+   чтобы не размывались. --y — высота узла: середина строки с отправителем. */
+.tree { flex: none; align-self: stretch; position: relative; margin: -6px 0; --y: 16px; }
+.tree i, .stem { position: absolute; display: block; }
+.tree .v, .stem { top: 0; bottom: 0; width: 1px;
+  background: repeating-linear-gradient(to bottom, var(--thread-line) 0 3px, transparent 3px 5px); }
+.tree .v.half { bottom: auto; height: calc(var(--y) + 1px); }
+.tree .v.down { top: calc(var(--y) + 3px); }
+.tree .h { top: var(--y); height: 1px;
+  background: repeating-linear-gradient(to right, var(--thread-line) 0 3px, transparent 3px 5px); }
+.tree .dot { top: calc(var(--y) - 2px); width: 5px; height: 5px; margin-left: -2px; box-sizing: border-box;
+  border: 1px solid var(--thread-line); border-radius: 50%; background: var(--pane); }
+.item.current .tree .dot { border-color: var(--accent); background: var(--accent); }
+.stem { left: 31px; top: 43px; }
 .item.member.selected { background: var(--selected); }
 .threads { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
   border: 1px solid var(--border); border-radius: 12px; background: none; color: var(--text-2); font-size: 12px; }

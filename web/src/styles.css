@@ -1,4 +1,5 @@
-/* Дизайн-токены. Бренд панели переопределяет --accent и др. через ui.brand.css_vars. */
+/* Дизайн-токены. ui.brand.accent пересчитывает --accent, --accent-soft, --accent-contrast
+   и --selected под тему (src/brand.ts); ui.brand.css_vars переопределяет любые токены. */
 :root {
   --accent: #2f6fde;
   --accent-contrast: #ffffff;
