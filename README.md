@@ -7,16 +7,30 @@ IMAP + SMTP submission (+ ManageSieve) сервером по своему кон
 Лицензия — MIT. Интеграции с панелями хостинга подключаются как адаптеры через
 публичный пакет `ext` и в ядро не входят.
 
-## Быстрый старт
+## Установка
 
 ```sh
-make web build                          # SPA + бинарь bin/webmail
-./bin/webmail gen-secret > /etc/webmail/session.key && chmod 600 /etc/webmail/session.key
-./bin/webmail config check -config /etc/webmail/config.yaml
-./bin/webmail serve -config /etc/webmail/config.yaml
+make web build                 # SPA + бинарь bin/webmail
+sudo make install              # systemd-сервис webmail (deploy/install.sh)
+sudo nano /etc/webmail/config.yaml && sudo systemctl restart webmail
+journalctl -u webmail -f
 ```
 
-Минимальный конфиг для обычного Postfix + Dovecot:
+`deploy/install.sh` создаёт пользователя `webmail`, `/etc/webmail/` с конфигом из примера
+и секретом сессии, ставит юнит с песочницей (`systemd-analyze security webmail` — 1.4)
+и запускает сервис, только если `webmail config check` проходит. Повторный запуск
+обновляет бинарь и юнит, не трогая конфиг и секрет. Переменные `WEBMAIL_*` можно
+положить в `/etc/webmail/webmail.env`.
+
+Без systemd:
+
+```sh
+./bin/webmail gen-secret > session.key && chmod 600 session.key
+./bin/webmail config check -config config.yaml
+./bin/webmail serve -config config.yaml
+```
+
+Минимальный конфиг для обычного Postfix + Dovecot (полный пример — `deploy/config.example.yaml`):
 
 ```yaml
 version: 1
@@ -58,13 +72,14 @@ smtp:
 | Список | Сортировка на сервере (SORT), поиск, фильтры, группировка по датам, мультивыбор, drag & drop в папки |
 | Чтение | Санитизация HTML (bluemonday + свои правила), блокировка внешних картинок, cid-картинки, вложения, исходник .eml |
 | Отправка | Новое, ответ, ответ всем, пересылка, вложения, копия в «Отправленные», флаги \Answered / $Forwarded |
+| Редактор | TipTap: форматирование, списки, ссылки, отмена; цитата исходного письма хранится отдельно и уходит без изменений вёрстки; файлы, брошенные или вставленные в текст, становятся вложениями |
 | Черновики | Автосохранение через 4 с после правки, сохранение при закрытии окна, продолжение из папки, перенос вложений, Bcc сохраняется |
 | Обновления | Новые письма во «Входящих» — push (IMAP IDLE → Server-Sent Events), остальные папки — опрос; непрочитанные в заголовке вкладки |
 | Действия | Прочитано, флаг, перемещение, удаление в корзину / навсегда из корзины и спама |
 | UI | Светлая и тёмная темы, бренд через CSS-переменные, адаптивная вёрстка, горячие клавиши |
 | Безопасность | CSRF-токен + проверка Origin, CSP, письма в iframe без скриптов, аудит-лог |
 
-Пока нет: адресная книга, идентичности и подписи, фильтры Sieve, полноценный HTML-редактор,
+Пока нет: адресная книга, идентичности и подписи, фильтры Sieve, картинки внутри текста письма,
 смена пароля (в ядре только драйвер `none`), хранилища сессий sqlite/redis, 2FA.
 План — в техническом задании.
 

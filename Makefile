@@ -2,7 +2,7 @@
 VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/ibuben/squareball/app.Version=$(VERSION)
 
-.PHONY: all web build test test-it e2e devstand run clean
+.PHONY: all web build install test test-it e2e devstand run clean
 
 all: web build
 
@@ -11,6 +11,9 @@ web:
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/webmail ./cmd/webmail
+
+install: build
+	sh deploy/install.sh bin/webmail
 
 test:
 	go vet ./...

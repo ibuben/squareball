@@ -1,0 +1,34 @@
+# Пример /etc/webmail/config.yaml. Полный список ключей и значения по умолчанию:
+#   webmail config show -config /etc/webmail/config.yaml
+version: 1
+
+server:
+  listen: "127.0.0.1:8080"          # за nginx/caddy; см. README про поток /api/v1/events
+  public_url: https://mail.example.com
+
+session:
+  secret_file: /etc/webmail/session.key
+
+imap:
+  host: mail.example.com
+  port: 993
+  security: tls                     # tls | starttls | none (none — только для 127.0.0.1)
+
+smtp:
+  host: mail.example.com
+  port: 587
+  security: starttls
+
+# login:
+#   default_domain: example.com     # вход по имени без @домена
+#   allowed_domains: [example.com]
+
+# sieve:
+#   enabled: true
+#   port: 4190
+
+# ui:
+#   brand:
+#     name: "Почта"
+#     logo_url: /logo.svg
+#     css_vars: { "--accent": "#0b7a5c" }
