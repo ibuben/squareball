@@ -70,9 +70,6 @@ type Login struct {
 	AllowedDomains       []string `yaml:"allowed_domains"`
 	RateLimit            Limits   `yaml:"rate_limit"`
 	CaptchaAfterFailures int      `yaml:"captcha_after_failures"`
-	TOTP                 struct {
-		Enabled bool `yaml:"enabled"`
-	} `yaml:"totp"`
 }
 
 type Limits struct {
