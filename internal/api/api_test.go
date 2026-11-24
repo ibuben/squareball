@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ibuben/squareball/ext"
 	"github.com/ibuben/squareball/internal/config"
 	"github.com/ibuben/squareball/internal/store"
 )
@@ -444,5 +446,85 @@ func TestIntegrationContacts(t *testing.T) {
 	_, coll := c.do("GET", "/api/v1/contacts/collected?q=carol", nil)
 	if l := coll["collected"].([]any); len(l) != 1 || l[0].(map[string]any)["name"] != "Кэрол" {
 		t.Fatalf("collected: %v", coll)
+	}
+}
+
+type fakeChanger struct {
+	caps ext.PasswordCaps
+	got  []ext.PasswordChange
+	err  error
+}
+
+func (f *fakeChanger) Capabilities() ext.PasswordCaps { return f.caps }
+func (f *fakeChanger) Change(_ context.Context, r ext.PasswordChange) error {
+	f.got = append(f.got, r)
+	return f.err
+}
+
+// Смена пароля: политика, проверка текущего через IMAP, сброс других сессий.
+// Драйвер подменён: настоящий пароль на стенде не меняется.
+func TestIntegrationPassword(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	cfg := testConfig(t)
+	s := newServer(t, cfg)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	login := func() *client {
+		jar, _ := cookiejar.New(nil)
+		c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+		st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+		if st != 200 {
+			t.Fatalf("login: %d %v", st, me)
+		}
+		c.csrf = me["csrf"].(string)
+		return c
+	}
+	c, other := login(), login()
+	if st, _ := c.do("GET", "/api/v1/account/password", nil); st != 404 {
+		t.Fatalf("driver none: %d", st)
+	}
+	fake := &fakeChanger{caps: ext.PasswordCaps{Policy: &ext.PasswordPolicy{MinLength: 12, ForbidChars: ":"}}}
+	cfg.Password.Driver = "fake"
+	s.SetPasswordChanger("fake", fake)
+	st, body := c.do("GET", "/api/v1/account/password", nil)
+	pol, _ := body["policy"].(map[string]any)
+	if st != 200 || pol["min_length"] != float64(12) || pol["forbid_chars"] != ":" {
+		t.Fatalf("policy: %d %v", st, body)
+	}
+	for _, tc := range []struct {
+		cur, new, code, detail string
+		status                 int
+	}{
+		{"Test12345!", "Short1!", "password.weak", "too_short", 400},
+		{"Test12345!", "Colon:Pass-123", "password.weak", "chars", 400},
+		{"Test12345!", "Bob-Strong-Pass1", "password.weak", "mailbox", 400},
+		{"Wrong-Current1", "New-Strong-Pass1", "password.current", "", 403},
+	} {
+		st, body := c.do("POST", "/api/v1/account/password", map[string]string{"current": tc.cur, "new": tc.new})
+		if st != tc.status || body["error"] != tc.code || (tc.detail != "" && body["detail"] != tc.detail) {
+			t.Errorf("%s: %d %v", tc.new, st, body)
+		}
+	}
+	if len(fake.got) != 0 {
+		t.Fatalf("driver called on rejected request: %+v", fake.got)
+	}
+	fake.err = ext.ErrWeakPassword
+	if st, body := c.do("POST", "/api/v1/account/password", map[string]string{"current": "Test12345!", "new": "New-Strong-Pass1"}); st != 400 || body["detail"] != "backend" {
+		t.Fatalf("backend weak: %d %v", st, body)
+	}
+	fake.err = nil
+	if st, body := c.do("POST", "/api/v1/account/password", map[string]string{"current": "Test12345!", "new": "New-Strong-Pass1"}); st != 200 {
+		t.Fatalf("change: %d %v", st, body)
+	}
+	if r := fake.got[len(fake.got)-1]; r.Mailbox != "bob@test.local" || r.Current != "Test12345!" || r.New != "New-Strong-Pass1" || r.RemoteIP == "" {
+		t.Fatalf("request: %+v", r)
+	}
+	if st, _ := c.do("GET", "/api/v1/auth/me", nil); st != 200 {
+		t.Fatalf("own session dropped: %d", st)
+	}
+	if st, _ := other.do("GET", "/api/v1/auth/me", nil); st != 401 {
+		t.Fatalf("other session survived: %d", st)
 	}
 }

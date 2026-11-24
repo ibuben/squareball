@@ -24,6 +24,7 @@ import (
 	"github.com/ibuben/squareball/internal/api"
 	"github.com/ibuben/squareball/internal/config"
 	"github.com/ibuben/squareball/internal/mail"
+	"github.com/ibuben/squareball/internal/password"
 	"github.com/ibuben/squareball/internal/store"
 	"github.com/ibuben/squareball/internal/web"
 )
@@ -38,6 +39,9 @@ const usage = `webmail — почтовый веб-клиент
   webmail config check [-config FILE]   проверить конфиг и подключение к серверам
   webmail config show  [-config FILE]   показать итоговый конфиг (с env и значениями по умолчанию)
   webmail gen-secret                    напечатать случайный секрет для session.secret_file
+  webmail passwd-file -file FILE [-verify-current]
+                                        помощник для password.driver: exec — меняет хеш
+                                        в Dovecot passwd-file (запрос JSON читается из stdin)
   webmail version
 
 Путь к конфигу: -config, иначе $WEBMAIL_CONFIG, иначе /etc/webmail/config.yaml.
@@ -57,6 +61,9 @@ func run(args []string, adapters []ext.Adapter) error {
 		return nil
 	}
 	cmd, rest := args[0], args[1:]
+	if cmd == "passwd-file" {
+		return passwdFile(rest)
+	}
 	if cmd == "config" && len(rest) > 0 {
 		cmd, rest = "config "+rest[0], rest[1:]
 	}
@@ -98,6 +105,27 @@ func run(args []string, adapters []ext.Adapter) error {
 	}
 	fmt.Print(usage)
 	return fmt.Errorf("unknown command %q", cmd)
+}
+
+// passwdFile — помощник драйвера exec. Ошибки пишет в stderr и выходит
+// с кодом из протокола exec (2 — неверный текущий пароль, 3 — новый не подходит).
+func passwdFile(args []string) error {
+	fs := flag.NewFlagSet("passwd-file", flag.ContinueOnError)
+	file := fs.String("file", "", "path to Dovecot passwd-file")
+	verify := fs.Bool("verify-current", false, "check current password against the stored BLF-CRYPT hash")
+	cost := fs.Int("cost", 10, "bcrypt cost")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *file == "" {
+		return errors.New("passwd-file: -file is required")
+	}
+	pf := &password.PasswdFile{Path: *file, VerifyCurrent: *verify, Cost: *cost}
+	if err := pf.Run(os.Stdin); err != nil {
+		fmt.Fprintln(os.Stderr, "passwd-file:", err)
+		os.Exit(password.ExitCode(err))
+	}
+	return nil
 }
 
 func check(path string) error {
@@ -184,6 +212,16 @@ func Run(ctx context.Context, cfgPath string, adapters ...ext.Adapter) error {
 		return err
 	}
 
+	// Встроенные драйверы смены пароля (exec, http); none и драйверы адаптеров — nil.
+	pc, err := password.New(&cfg.Password, log)
+	if err != nil {
+		return err
+	}
+	if pc != nil {
+		srv.SetPasswordChanger(cfg.Password.Driver, pc)
+		log.Info("password change", "driver", cfg.Password.Driver)
+	}
+
 	known := map[string]bool{}
 	for _, a := range adapters {
 		known[a.Name()] = true
@@ -201,9 +239,8 @@ func Run(ctx context.Context, cfgPath string, adapters ...ext.Adapter) error {
 			return fmt.Errorf("adapters.%s: adapter is not compiled into this binary", name)
 		}
 	}
-	if d := cfg.Password.Driver; d != "none" {
-		// В ядре пока есть только none; остальные драйверы регистрируют адаптеры.
-		log.Warn("password.driver has no implementation in this binary; password change is disabled", "driver", d)
+	if !srv.PasswordEnabled() && cfg.Password.Driver != "none" {
+		log.Warn("adapter did not register password driver; password change is disabled", "driver", cfg.Password.Driver)
 	}
 
 	hs := &http.Server{

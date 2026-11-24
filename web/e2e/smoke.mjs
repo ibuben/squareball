@@ -233,6 +233,40 @@ try {
   await page.locator('[data-test=vacation-enabled]').uncheck()
   await saveSieveVia(page.getByRole('button', { name: 'Сохранить' }))
   step('автоответ сохранён в Sieve; правило и автоответ убраны')
+
+  // Смена пароля (если на сервере настроен драйвер): туда и обратно.
+  if (await page.locator('.nav .item', { hasText: 'Пароль' }).isVisible()) {
+    const NEWPASS = 'E2e-Новый-Пароль-7'
+    const change = async (from, to) => {
+      await page.locator('.nav .item', { hasText: 'Пароль' }).click()
+      const cur = page.locator('[data-test=pw-current]')
+      await cur.fill(from)
+      await page.locator('[data-test=pw-new]').fill('short')
+      await page.locator('[data-test=pw-repeat]').fill('short')
+      if (await page.getByRole('button', { name: 'Сменить пароль' }).isEnabled()) throw new Error('слабый пароль принят формой')
+      await page.locator('[data-test=pw-new]').fill(to)
+      await page.locator('[data-test=pw-repeat]').fill(to)
+      const res = page.waitForResponse((r) => r.url().endsWith('/api/v1/account/password') && r.request().method() === 'POST')
+      await page.getByRole('button', { name: 'Сменить пароль' }).click()
+      if (!(await res).ok()) throw new Error(`смена пароля: HTTP ${(await res).status()}`)
+      await page.getByText('Пароль изменён').first().waitFor()
+      if (await cur.inputValue()) throw new Error('форма не очистилась после смены')
+    }
+    await change(PASS, NEWPASS)
+    try {
+      const other = await browser.newContext()
+      const ok = await other.request.post(`${BASE}/api/v1/auth/login`, { data: { username: USER1, password: NEWPASS }, headers: { Origin: BASE } })
+      await other.close()
+      if (!ok.ok()) throw new Error(`вход с новым паролем: HTTP ${ok.status()}`)
+      // Сессия, в которой сменили пароль, продолжает работать с IMAP.
+      await page.getByRole('button', { name: 'Почта' }).first().click()
+      await page.locator('.item').first().waitFor()
+      await page.getByRole('button', { name: 'Настройки' }).first().click()
+    } finally {
+      await change(NEWPASS, PASS)
+    }
+    step('пароль сменён, вход с новым паролем работает, пароль возвращён')
+  }
   await page.getByRole('button', { name: 'Почта' }).first().click()
 
   // Контакты: группа, контакт в ней, импорт vCard, подсказка группы в «Кому».

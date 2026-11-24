@@ -46,6 +46,8 @@ type Server struct {
 	pwChanger ext.PasswordChanger
 	brand     ext.BrandProvider
 	masterPw  string
+
+	pwnedClient *http.Client // проверка пароля по базе утечек (password.policy.check_breached)
 }
 
 type Options struct {
@@ -64,6 +66,8 @@ func New(o Options) (*Server, error) {
 		loginIP:   newLimiter(cfg.Login.RateLimit.PerIP),
 		loginUser: newLimiter(cfg.Login.RateLimit.PerUser),
 		sendUser:  newLimiter(cfg.SMTP.RateLimit.PerUser),
+
+		pwnedClient: &http.Client{Timeout: 5 * time.Second},
 	}
 	if s.store == nil {
 		return nil, errors.New("api: store is required")
@@ -115,6 +119,19 @@ func (s *Server) SetPasswordChanger(name string, pc ext.PasswordChanger) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pwName, s.pwChanger = name, pc
+}
+
+// PasswordEnabled сообщает, есть ли драйвер с именем из password.driver.
+func (s *Server) PasswordEnabled() bool {
+	_, ok := s.passwordChanger()
+	return ok
+}
+
+func (s *Server) passwordChanger() (ext.PasswordChanger, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ok := s.pwChanger != nil && s.pwName == s.cfg.Password.Driver
+	return s.pwChanger, ok
 }
 
 func (s *Server) SetBrandProvider(bp ext.BrandProvider) {

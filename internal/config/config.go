@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -135,13 +136,34 @@ type Identities struct {
 	Level string `yaml:"level"` // single | domain | any
 }
 
+// Password — смена пароля ящика. driver: none | exec | http | имя адаптера.
 type Password struct {
 	Driver string `yaml:"driver"`
 	Policy struct {
 		MinLength      int  `yaml:"min_length"`
-		RequireClasses int  `yaml:"require_classes"`
-		CheckBreached  bool `yaml:"check_breached"`
+		MaxLength      int  `yaml:"max_length"`
+		RequireClasses int  `yaml:"require_classes"` // из 4: строчные, заглавные, цифры, прочие
+		ForbidMailbox  bool `yaml:"forbid_mailbox"`  // пароль не должен содержать имя ящика
+		CheckBreached  bool `yaml:"check_breached"`  // Have I Been Pwned, k-anonymity
 	} `yaml:"policy"`
+	Exec PasswordExec `yaml:"exec"`
+	HTTP PasswordHTTP `yaml:"http"`
+}
+
+// PasswordExec — внешняя команда. Запрос приходит JSON в stdin, ответ — код выхода.
+type PasswordExec struct {
+	Command         []string      `yaml:"command"` // argv, без оболочки
+	Timeout         time.Duration `yaml:"timeout"`
+	VerifiesCurrent bool          `yaml:"verifies_current"`
+}
+
+// PasswordHTTP — POST JSON на API панели или сервиса учёток.
+type PasswordHTTP struct {
+	URL             string        `yaml:"url"`
+	TokenFile       string        `yaml:"token_file"` // Bearer, права 0600
+	Timeout         time.Duration `yaml:"timeout"`
+	TLSVerify       bool          `yaml:"tls_verify"`
+	VerifiesCurrent bool          `yaml:"verifies_current"`
 }
 
 type UI struct {
@@ -208,6 +230,11 @@ func Defaults() *Config {
 	c.Password.Driver = "none"
 	c.Password.Policy.MinLength = 10
 	c.Password.Policy.RequireClasses = 3
+	c.Password.Policy.MaxLength = 128
+	c.Password.Policy.ForbidMailbox = true
+	c.Password.Exec.Timeout = 10 * time.Second
+	c.Password.HTTP.Timeout = 10 * time.Second
+	c.Password.HTTP.TLSVerify = true
 	c.UI.DefaultLanguage = "ru"
 	c.UI.Languages = []string{"ru", "en", "uz"}
 	c.UI.Theme = "system"
@@ -269,6 +296,7 @@ func (c *Config) Validate() error {
 	if c.Storage.Driver != "sqlite" {
 		add("storage.driver: %q is not implemented yet, use sqlite", c.Storage.Driver)
 	}
+	c.validatePassword(add)
 	if !contains([]string{"single", "domain", "any"}, c.Identities.Level) {
 		add("identities.level: must be single, domain or any")
 	}
@@ -338,6 +366,44 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func (c *Config) validatePassword(add func(string, ...any)) {
+	p := &c.Password
+	pol := p.Policy
+	if pol.MinLength < 6 || pol.MinLength > 128 {
+		add("password.policy.min_length: must be 6..128")
+	}
+	if pol.MaxLength < pol.MinLength || pol.MaxLength > 1024 {
+		add("password.policy.max_length: must be min_length..1024")
+	}
+	if pol.RequireClasses < 0 || pol.RequireClasses > 4 {
+		add("password.policy.require_classes: must be 0..4")
+	}
+	switch p.Driver {
+	case "none":
+	case "exec":
+		if len(p.Exec.Command) == 0 || !filepath.IsAbs(p.Exec.Command[0]) {
+			add("password.exec.command: required, the first element must be an absolute path")
+		}
+		if p.Exec.Timeout <= 0 || p.Exec.Timeout > time.Minute {
+			add("password.exec.timeout: must be 1s..1m")
+		}
+	case "http":
+		u, err := url.Parse(p.HTTP.URL)
+		if p.HTTP.URL == "" || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			add("password.http.url: required, http(s)://host/path")
+		} else if u.Scheme == "http" && !isLoopback(u.Hostname()) {
+			add("password.http.url: plain http is allowed only for loopback hosts")
+		}
+		if p.HTTP.Timeout <= 0 || p.HTTP.Timeout > time.Minute {
+			add("password.http.timeout: must be 1s..1m")
+		}
+	default:
+		if _, ok := c.AdapterEnabled(p.Driver); !ok {
+			add("password.driver: must be none, exec, http or the name of an enabled adapter")
+		}
+	}
+}
+
 // Show возвращает итоговый конфиг в YAML. Секретов в нём нет: только пути к файлам.
 func (c *Config) Show() ([]byte, error) { return yaml.Marshal(c) }
 
@@ -379,8 +445,10 @@ func applyEnv(c *Config, environ []string) error {
 		}
 		k, v, _ := strings.Cut(kv, "=")
 		path := strings.Split(strings.ToLower(strings.TrimPrefix(k, "WEBMAIL_")), "__")
-		if len(path) == 1 && (path[0] == "config" || path[0] == "") {
-			continue // WEBMAIL_CONFIG — путь к файлу, не ключ
+		if len(path) < 2 {
+			// Ключи верхнего уровня — секции; переменные без "__" (WEBMAIL_CONFIG,
+			// WEBMAIL_IT для тестов и т. п.) к конфигу не относятся.
+			continue
 		}
 		if err := setPath(reflect.ValueOf(c).Elem(), path, v); err != nil {
 			return fmt.Errorf("%s: %w", k, err)

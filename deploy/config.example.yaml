@@ -27,6 +27,20 @@ smtp:
 #   enabled: true
 #   port: 4190
 
+# Смена пароля — docs/password.md.
+# password:
+#   driver: exec                    # none | exec | http | имя адаптера
+#   exec:
+#     command: [/usr/local/bin/webmail, passwd-file, -file, /etc/dovecot/passwd.d/users]
+#   # driver: http
+#   # http:
+#   #   url: https://panel.example.com/api/mail/password
+#   #   token_file: /etc/webmail/password-api.token
+#   policy:
+#     min_length: 10
+#     require_classes: 3
+#     check_breached: false
+
 # ui:
 #   brand:
 #     name: "Почта"

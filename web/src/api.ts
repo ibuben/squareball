@@ -54,6 +54,11 @@ export interface Group { id: number; name: string; count: number }
 export interface Collected { email: string; name: string; uses: number; last_used: string }
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
+export interface PasswordPolicy {
+  min_length: number; max_length: number; require_classes: number
+  forbid_chars?: string; forbid_mailbox: boolean
+}
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, public detail?: string) {
     super(detail || code)
@@ -132,6 +137,8 @@ export const api = {
   groups: () => request<{ groups: Group[] }>('GET', '/api/v1/groups'),
   saveGroup: (g: Partial<Group>) => request<Group>('POST', '/api/v1/groups', g),
   deleteGroup: (id: number) => request('POST', '/api/v1/groups/delete', { id }),
+  passwordPolicy: () => request<{ policy: PasswordPolicy }>('GET', '/api/v1/account/password'),
+  changePassword: (current: string, next: string) => request('POST', '/api/v1/account/password', { current, new: next }),
   sieve: () => request<SieveState>('GET', '/api/v1/sieve'),
   putSieve: (body: { mode: 'rules' | 'raw'; tag: string; ruleset?: Ruleset; raw?: string }) =>
     request<SieveState>('PUT', '/api/v1/sieve', body),

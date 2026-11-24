@@ -13,6 +13,7 @@
   --hover: #eef1f5;
   --selected: #dfe8fb;
   --danger: #d23c3c;
+  --success: #1a7f37;
   --flag: #e0702b;
   --shadow: 0 8px 30px rgba(20, 30, 50, 0.16);
   --radius: 8px;
@@ -20,6 +21,7 @@
   color-scheme: light;
 }
 :root[data-theme="dark"] {
+  --success: #4cc26b;
   --accent: #5b8ef0;
   --accent-soft: #1f2a40;
   --bg: #15181e;

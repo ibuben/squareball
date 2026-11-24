@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,12 +11,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/ibuben/squareball/ext"
 	"github.com/ibuben/squareball/internal/mail"
+	"github.com/ibuben/squareball/internal/password"
 	"github.com/ibuben/squareball/internal/sanitize"
 )
 
@@ -44,6 +47,7 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("POST /api/v1/send", s.authed(s.handleSend))
 	m.HandleFunc("POST /api/v1/drafts", s.authed(s.handleSaveDraft))
 	m.HandleFunc("POST /api/v1/drafts/discard", s.authed(s.handleDiscardDraft))
+	m.HandleFunc("GET /api/v1/account/password", s.authed(s.handlePasswordInfo))
 	m.HandleFunc("POST /api/v1/account/password", s.authed(s.handlePassword))
 	if static != nil {
 		m.Handle("/", static)
@@ -156,9 +160,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) meBody(r *http.Request, mailbox, csrf string) map[string]any {
-	s.mu.RLock()
-	pw := s.pwChanger != nil && s.pwName == s.cfg.Password.Driver
-	s.mu.RUnlock()
+	pw := s.PasswordEnabled()
 	return map[string]any{
 		"mailbox": mailbox,
 		"csrf":    csrf,
@@ -644,12 +646,22 @@ func (s *Server) handleDiscardDraft(w http.ResponseWriter, r *http.Request) {
 
 // --- смена пароля ------------------------------------------------------------------
 
+// handlePasswordInfo отдаёт интерфейсу правила нового пароля.
+func (s *Server) handlePasswordInfo(w http.ResponseWriter, r *http.Request) {
+	pc, ok := s.passwordChanger()
+	if !ok {
+		writeErr(w, http.StatusNotFound, "password.disabled", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"policy": password.FromConfig(&s.cfg.Password, pc.Capabilities().Policy),
+	})
+}
+
 func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r.Context())
-	s.mu.RLock()
-	pc, name := s.pwChanger, s.pwName
-	s.mu.RUnlock()
-	if pc == nil || name != s.cfg.Password.Driver {
+	pc, ok := s.passwordChanger()
+	if !ok {
 		writeErr(w, http.StatusNotFound, "password.disabled", "")
 		return
 	}
@@ -661,24 +673,55 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid", "")
 		return
 	}
-	if !s.loginUser.Allow("pw:" + sess.Mailbox) {
-		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
-		return
-	}
 	caps := pc.Capabilities()
 	if in.Current == "" {
 		writeErr(w, http.StatusBadRequest, "password.current_required", "")
 		return
 	}
+	var v *password.Violation
+	if err := password.FromConfig(&s.cfg.Password, caps.Policy).Check(sess.Mailbox, in.New); errors.As(err, &v) {
+		writeErr(w, http.StatusBadRequest, "password.weak", v.Reason)
+		return
+	}
+	if in.New == in.Current {
+		writeErr(w, http.StatusBadRequest, "password.weak", "same")
+		return
+	}
+	// Лимит — перед проверкой текущего пароля: это и есть попытка подбора.
+	// Отказы по политике выше его не расходуют.
+	if !s.loginUser.Allow("pw:" + sess.Mailbox) {
+		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
+		return
+	}
 	if !caps.VerifiesCurrent {
 		c, err := mail.DialIMAP(&s.cfg.IMAP, mail.Creds{Username: sess.Mailbox, Password: in.Current})
 		if err != nil {
-			writeErr(w, http.StatusForbidden, "password.current", "")
+			if errors.Is(err, mail.ErrAuth) {
+				writeErr(w, http.StatusForbidden, "password.current", "")
+			} else {
+				s.log.Error("password: verify current", "err", err)
+				writeErr(w, http.StatusBadGateway, "password.unavailable", "")
+			}
 			return
 		}
 		c.Close()
 	}
-	err := pc.Change(r.Context(), ext.PasswordChange{
+	if s.cfg.Password.Policy.CheckBreached {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		leaked, err := password.Breached(ctx, s.pwnedClient, in.New)
+		cancel()
+		switch {
+		case err != nil:
+			// Сервис утечек недоступен — не мешаем смене пароля, только пишем в журнал.
+			s.log.Warn("password: breach check failed", "err", err)
+		case leaked:
+			writeErr(w, http.StatusBadRequest, "password.weak", "breached")
+			return
+		}
+	}
+	// Смену не прерываем, если клиент закрыл соединение: драйвер ограничен
+	// своим тайм-аутом, а половина смены хуже, чем лишняя секунда ожидания.
+	err := pc.Change(context.WithoutCancel(r.Context()), ext.PasswordChange{
 		Mailbox: sess.Mailbox, Current: in.Current, New: in.New, RemoteIP: s.ClientIP(r),
 	})
 	switch {
@@ -691,9 +734,10 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		s.audit.Info("password changed", "mailbox", sess.Mailbox, "ip", s.ClientIP(r))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case errors.Is(err, ext.ErrWrongPassword):
+		s.audit.Info("password change rejected", "mailbox", sess.Mailbox, "reason", "current", "ip", s.ClientIP(r))
 		writeErr(w, http.StatusForbidden, "password.current", "")
 	case errors.Is(err, ext.ErrWeakPassword):
-		writeErr(w, http.StatusBadRequest, "password.weak", "")
+		writeErr(w, http.StatusBadRequest, "password.weak", "backend")
 	case errors.Is(err, ext.ErrRateLimited):
 		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
 	default:

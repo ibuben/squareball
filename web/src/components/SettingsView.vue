@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Filter, Forward, Palmtree, Palette, UserRound } from 'lucide-vue-next'
+import { Filter, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
 import { applyTheme, state } from '../store'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
 import VacationSettings from './settings/VacationSettings.vue'
+import PasswordSettings from './settings/PasswordSettings.vue'
 
-type Section = 'identities' | 'filters' | 'vacation' | 'forward' | 'appearance'
-const sections: { id: Section; label: string; icon: unknown; sieve?: boolean }[] = [
+type Section = 'identities' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
+const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean }[] = [
   { id: 'identities', label: 'Отправители и подписи', icon: UserRound },
   { id: 'filters', label: 'Фильтры', icon: Filter, sieve: true },
   { id: 'vacation', label: 'Автоответ', icon: Palmtree, sieve: true },
   { id: 'forward', label: 'Пересылка', icon: Forward, sieve: true },
+  { id: 'password', label: 'Пароль', icon: KeyRound, password: true },
   { id: 'appearance', label: 'Внешний вид', icon: Palette },
 ]
 const current = ref<Section>((sessionStorage.getItem('wm.settings') as Section) || 'identities')
@@ -27,7 +29,7 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
     <nav class="nav" aria-label="Настройки">
       <h1>Настройки</h1>
       <button v-for="s in sections" :key="s.id" class="item" :class="{ on: current === s.id }"
-              v-show="!s.sieve || state.me?.features.sieve" @click="open(s.id)">
+              v-show="(!s.sieve || state.me?.features.sieve) && (!s.password || state.me?.features.password_change)" @click="open(s.id)">
         <component :is="s.icon" :size="16" /> {{ s.label }}
       </button>
     </nav>
@@ -36,6 +38,7 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
       <FiltersSettings v-else-if="current === 'filters'" />
       <VacationSettings v-else-if="current === 'vacation'" kind="vacation" />
       <VacationSettings v-else-if="current === 'forward'" kind="forward" />
+      <PasswordSettings v-else-if="current === 'password'" />
       <section v-else>
         <h2>Внешний вид</h2>
         <div class="card">

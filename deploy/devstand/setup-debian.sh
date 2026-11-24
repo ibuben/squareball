@@ -39,10 +39,10 @@ mail_gid = vmail
 auth_mechanisms = plain login
 
 passdb passwd-file {
-  passwd_file_path = /etc/dovecot/users
+  passwd_file_path = /etc/dovecot/passwd.d/users
 }
 userdb passwd-file {
-  passwd_file_path = /etc/dovecot/users
+  passwd_file_path = /etc/dovecot/passwd.d/users
 }
 
 namespace inbox {
@@ -96,13 +96,27 @@ sieve_script personal {
 }
 EOF
 
-: > /etc/dovecot/users
-for u in $USERS; do
-  hash=$(doveadm pw -s BLF-CRYPT -p "$PASS")
-  echo "$u@$DOMAIN:$hash::::::" >> /etc/dovecot/users
-done
-chown root:dovecot /etc/dovecot/users
-chmod 0640 /etc/dovecot/users
+# Файл паролей лежит в своём каталоге: помощник смены пароля (webmail passwd-file)
+# заменяет его атомарно через rename, для этого ему нужна запись в каталог.
+# Каталог setgid dovecot — новые версии файла сохраняют группу и читаются Dovecot.
+# Владельцем каталога станет webmail, когда сервис установлен (deploy/install.sh).
+install -d -o root -g dovecot -m 2750 /etc/dovecot/passwd.d
+USERS_FILE=/etc/dovecot/passwd.d/users
+if [ ! -s "$USERS_FILE" ]; then
+  [ -f /etc/dovecot/users ] && mv /etc/dovecot/users "$USERS_FILE"
+fi
+if [ ! -s "$USERS_FILE" ]; then
+  : > "$USERS_FILE"
+  for u in $USERS; do
+    hash=$(doveadm pw -s BLF-CRYPT -p "$PASS")
+    echo "$u@$DOMAIN:$hash::::::" >> "$USERS_FILE"
+  done
+fi
+chown root:dovecot "$USERS_FILE"
+chmod 0640 "$USERS_FILE"
+if getent passwd webmail >/dev/null; then
+  chown webmail /etc/dovecot/passwd.d "$USERS_FILE"
+fi
 
 doveconf -n >/dev/null
 systemctl restart dovecot

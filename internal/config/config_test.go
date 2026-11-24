@@ -83,6 +83,7 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("WEBMAIL_SMTP__MAX_MESSAGE_SIZE", "10MB")
 	t.Setenv("WEBMAIL_LOGIN__ALLOWED_DOMAINS", "a.test, b.test")
 	t.Setenv("WEBMAIL_LOGIN__RATE_LIMIT__PER_IP", "3/1m")
+	t.Setenv("WEBMAIL_SOMETHING", "ignored") // без "__" — не ключ конфига
 	c, err := Load(write(t, minimal))
 	if err != nil {
 		t.Fatal(err)
@@ -146,5 +147,35 @@ func TestReadSecretRejectsOpenPermissions(t *testing.T) {
 	b, err := ReadSecret(p)
 	if err != nil || string(b) != "secret" {
 		t.Fatalf("got %q, %v", b, err)
+	}
+}
+
+func TestPasswordDriverValidation(t *testing.T) {
+	cases := map[string]string{
+		"password: {driver: exec}":                                                   "password.exec.command",
+		"password: {driver: exec, exec: {command: [helper]}}":                        "password.exec.command",
+		"password: {driver: exec, exec: {command: [/usr/local/bin/x], timeout: 2m}}": "password.exec.timeout",
+		"password: {driver: http, http: {url: 'http://panel.example.com/pw'}}":       "plain http",
+		"password: {driver: http}":                                                   "password.http.url",
+		"password: {driver: panel}":                                                  "password.driver",
+		"password: {policy: {min_length: 4}}":                                        "min_length",
+		"password: {policy: {min_length: 20, max_length: 10}}":                       "max_length",
+		"password: {policy: {require_classes: 5}}":                                   "require_classes",
+	}
+	for body, want := range cases {
+		_, err := Load(write(t, minimal+body+"\n"))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v (want %q)", body, err, want)
+		}
+	}
+	for _, body := range []string{
+		"password: {driver: exec, exec: {command: [/usr/local/bin/webmail, passwd-file, -file, /etc/dovecot/users]}}",
+		"password: {driver: http, http: {url: 'http://127.0.0.1:10041/webmail/password'}}",
+		"password: {driver: http, http: {url: 'https://panel.example.com/api/pw'}}",
+		"password: {driver: panel}\nadapters: {panel: {enabled: true}}",
+	} {
+		if _, err := Load(write(t, minimal+body+"\n")); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
 	}
 }
