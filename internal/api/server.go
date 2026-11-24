@@ -61,6 +61,9 @@ type Server struct {
 	sessionSecret []byte            // для ключа шифрования паролей внешних книг
 	davLocks      davLocks
 
+	calendarSource ext.CalendarSource // календари (адаптер)
+	calLists       calLists           // найденные календари ящиков, кэш в памяти
+
 	imgClient *http.Client // прокси картинок: только публичные адреса
 	imgSem    chan struct{}
 

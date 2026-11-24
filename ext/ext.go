@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 // Adapter — подключаемое расширение. Передаётся в app.Run и включается,
@@ -54,6 +55,9 @@ type Core interface {
 	// Учётки, кэш контактов и синхронизацию ведёт ядро; источник отвечает
 	// только за протокол. Один источник на установку.
 	SetContactSource(cs ContactSource)
+	// SetCalendarSource подключает календари (например, CalDAV). Ядро ничего
+	// не кэширует: события запрашиваются у источника за нужный диапазон.
+	SetCalendarSource(cs CalendarSource)
 	// EndSessions завершает все сессии ящика: например, панель сменила
 	// пароль или заблокировала ящик. Возвращает число завершённых сессий.
 	EndSessions(mailbox string) int
@@ -211,3 +215,49 @@ var (
 	ErrContactNotFound  = errors.New("contact book or card not found")
 	ErrContactForbidden = errors.New("address is not allowed")
 )
+
+// --- календари ------------------------------------------------------------------
+
+// CalendarPreset — календари, которые администратор подключает всем ящикам.
+// Account — как у адресных книг (в том числе PasswordSession).
+type CalendarPreset struct {
+	ID       string
+	Name     string
+	Account  ContactAccount
+	ReadOnly bool
+}
+
+// RemoteCalendar — календарь на сервере.
+type RemoteCalendar struct {
+	URL      string // абсолютный URL коллекции
+	Name     string
+	Color    string // #rrggbb, если сервер его хранит
+	ReadOnly bool
+}
+
+// RemoteObject — объект календаря: адрес на сервере, ETag и iCalendar как есть.
+type RemoteObject struct {
+	Href string
+	ETag string
+	ICS  []byte
+}
+
+// CalendarSource — протокол календарей. Ошибки — те же, что у ContactSource
+// (ErrContactAuth, ErrContactConflict, ErrContactReadOnly, ErrContactNotFound,
+// ErrContactForbidden).
+type CalendarSource interface {
+	CalendarPresets(mailbox string) []CalendarPreset
+	// DiscoverCalendars находит календари с событиями (VEVENT) по адресу
+	// сервера, принципала или самого календаря.
+	DiscoverCalendars(ctx context.Context, acc ContactAccount) ([]RemoteCalendar, error)
+	// Query — объекты с событиями, которые пересекают [from, to); повторения
+	// учитывает сервер.
+	Query(ctx context.Context, acc ContactAccount, cal string, from, to time.Time) ([]RemoteObject, error)
+	GetObject(ctx context.Context, acc ContactAccount, cal, href string) (RemoteObject, error)
+	// FindUID — объект с событием UID; ErrContactNotFound, если его нет.
+	FindUID(ctx context.Context, acc ContactAccount, cal, uid string) (RemoteObject, error)
+	// PutObject создаёт объект (href == "", имя выбирает источник) или
+	// заменяет его при совпадении ETag.
+	PutObject(ctx context.Context, acc ContactAccount, cal, href, etag string, ics []byte) (newHref, newETag string, err error)
+	DeleteObject(ctx context.Context, acc ContactAccount, cal, href, etag string) error
+}
