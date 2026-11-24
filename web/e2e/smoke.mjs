@@ -793,6 +793,31 @@ try {
       if (res.status() !== 403) throw new Error(`повтор ссылки входа: HTTP ${res.status()}`)
       await again.context().close()
       step('вход из панели по одноразовой ссылке, смена пароля без текущего')
+
+      // Панель передаёт язык и тему — они важнее выбора, сохранённого в браузере.
+      const p2 = 'v1.' + Buffer.from(JSON.stringify({ sub: mailbox, exp: Math.floor(Date.now() / 1000) + 60, jti: randomUUID(), lang: 'ru', theme: 'dark' })).toString('base64url')
+      const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' })
+      await ctx2.addInitScript(() => {
+        if (!sessionStorage.getItem('seeded')) {
+          localStorage.setItem('wm.lang', 'en'); localStorage.setItem('wm.theme', 'light'); sessionStorage.setItem('seeded', '1')
+        }
+      })
+      const pp = await ctx2.newPage()
+      pp.on('pageerror', (e) => errors.push('sso prefs: ' + e.message))
+      await pp.goto(`${BASE}/sso/panel?token=${p2}.${createHmac('sha256', key).update(p2).digest('base64url')}`)
+      await pp.locator('.item').first().waitFor()
+      const got = await pp.evaluate(() => ({
+        lang: document.documentElement.lang, theme: document.documentElement.dataset.theme, search: location.search,
+        stored: localStorage.getItem('wm.lang') + '/' + localStorage.getItem('wm.theme'),
+        cookie: document.cookie.includes('wm_lang=ru'),
+      }))
+      if (got.lang !== 'ru' || got.theme !== 'dark' || got.search !== '' || got.stored !== 'ru/dark' || !got.cookie) {
+        throw new Error('язык и тема из панели: ' + JSON.stringify(got))
+      }
+      if (!(await pp.getByRole('button', { name: 'Настройки' }).first().isVisible())) throw new Error('интерфейс не на русском после входа из панели')
+      await pp.screenshot({ path: `${SHOTS}/27-panel-sso-prefs.png` })
+      await ctx2.close()
+      step('вход из панели с языком и темой панели')
     }
     await sso.close()
   }

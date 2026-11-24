@@ -372,6 +372,8 @@ func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusNotFound, "mail.not_found", "")
 	case errors.As(err, &ie):
 		writeErr(w, http.StatusBadRequest, "mail.server", ie.Text)
+	case errors.Is(err, errImportBody):
+		writeErr(w, http.StatusBadRequest, "import.unreadable", "")
 	case errors.As(err, &se):
 		writeErr(w, http.StatusBadRequest, "mail.rejected", se.Message)
 	default:
@@ -476,4 +478,38 @@ func (l *limiter) Reset(key string) {
 	l.mu.Lock()
 	delete(l.hits, key)
 	l.mu.Unlock()
+}
+
+// serverLangs — языки, на которых сервер умеет писать письма и служебные тексты.
+var serverLangs = map[string]bool{"en": true, "ru": true}
+
+// Lang — язык пользователя для текстов, которые формирует сервер (уведомления о прочтении,
+// ответы на приглашения, имена правил Sieve). Порядок: cookie wm_lang, которую ставит
+// клиент по выбранному языку интерфейса → Accept-Language → ui.default_language.
+func (s *Server) Lang(r *http.Request) string {
+	ok := func(l string) bool {
+		if !serverLangs[l] {
+			return false
+		}
+		for _, a := range s.cfg.UI.Languages {
+			if a == l {
+				return true
+			}
+		}
+		return len(s.cfg.UI.Languages) == 0
+	}
+	if c, err := r.Cookie("wm_lang"); err == nil && ok(c.Value) {
+		return c.Value
+	}
+	for _, part := range strings.Split(r.Header.Get("Accept-Language"), ",") {
+		tag, _, _ := strings.Cut(strings.TrimSpace(part), ";")
+		base, _, _ := strings.Cut(strings.ToLower(tag), "-")
+		if ok(base) {
+			return base
+		}
+	}
+	if serverLangs[s.cfg.UI.DefaultLanguage] {
+		return s.cfg.UI.DefaultLanguage
+	}
+	return "en"
 }

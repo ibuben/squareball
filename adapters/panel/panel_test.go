@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,8 @@ func (f *fakeCore) StartSession(w http.ResponseWriter, r *http.Request, g ext.Se
 	f.grants = append(f.grants, g)
 	return f.startErr
 }
+func (f *fakeCore) Lang(r *http.Request) string { return "en" }
+
 func (f *fakeCore) ClientIP(r *http.Request) string {
 	h, _, _ := strings.Cut(r.RemoteAddr, ":")
 	return h
@@ -121,7 +124,7 @@ func TestSSOHandler(t *testing.T) {
 	// Повтор той же ссылки — отказ со страницей ошибки.
 	w = httptest.NewRecorder()
 	f.mux.ServeHTTP(w, httptest.NewRequest("GET", "/sso/panel?token="+tok, nil))
-	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "недействительна") || len(f.grants) != 1 {
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "invalid or has expired") || len(f.grants) != 1 {
 		t.Errorf("replay: %d %s", w.Code, w.Body)
 	}
 	// POST формой.
@@ -218,5 +221,26 @@ func TestConfig(t *testing.T) {
 	f.mux.ServeHTTP(w, httptest.NewRequest("POST", "/panel/v1/sessions/end", strings.NewReader(`{}`)))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("api without token: %d", w.Code)
+	}
+}
+
+// Язык и тема из токена уходят клиенту в адресе; мусор отбрасывается.
+func TestSSOLangTheme(t *testing.T) {
+	_, f := setup(t, Config{})
+	for i, c := range []struct{ lang, theme, want string }{
+		{"ru", "dark", "/?lang=ru&theme=dark"},
+		{" RU ", "", "/?lang=ru"},
+		{"", "system", "/?theme=system"},
+		{"pt-BR", "light", "/?lang=pt-br&theme=light"},
+		{"ru&x=1", "<b>", "/"},
+		{"", "", "/"},
+	} {
+		cl := claims("bob@test.local", time.Minute, fmt.Sprintf("jti-sso-lang-%04d", i))
+		cl.Lang, cl.Theme = c.lang, c.theme
+		w := httptest.NewRecorder()
+		f.mux.ServeHTTP(w, httptest.NewRequest("GET", "/sso/panel?token="+Sign(secret, cl), nil))
+		if w.Code != http.StatusSeeOther || w.Header().Get("Location") != c.want {
+			t.Errorf("lang %q theme %q: %d %s, want %s", c.lang, c.theme, w.Code, w.Header().Get("Location"), c.want)
+		}
 	}
 }

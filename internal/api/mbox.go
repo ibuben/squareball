@@ -180,7 +180,8 @@ func (s *Server) handleImportMbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-var errImportBody = &mail.SendError{Code: 400, Message: "не удалось прочитать файл"}
+// errImportBody — файл не дочитан или не разбирается; клиент показывает свой текст по коду.
+var errImportBody = errors.New("import: unreadable file")
 
 // importOne кладёт письмо в выбранную папку. Отказ сервера по одному письму
 // не прерывает импорт; разрыв соединения — прерывает.

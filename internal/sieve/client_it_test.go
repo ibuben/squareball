@@ -67,8 +67,8 @@ func TestIntegrationGeneratedScriptAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if err := c.CheckScript(sample().Script()); err != nil {
-		t.Fatalf("dovecot rejected generated script: %v\n%s", err, sample().Script())
+	if err := c.CheckScript(sample().Script("en")); err != nil {
+		t.Fatalf("dovecot rejected generated script: %v\n%s", err, sample().Script("en"))
 	}
 	if err := c.CheckScript(roundcube); err != nil {
 		t.Fatalf("roundcube sample: %v", err)

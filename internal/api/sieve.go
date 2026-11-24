@@ -131,7 +131,7 @@ func (s *Server) handlePutSieve(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "sieve.invalid", err.Error())
 			return
 		}
-		script = in.Ruleset.Script()
+		script = in.Ruleset.Script(s.Lang(r))
 	case in.Mode == "raw":
 		if len(in.Raw) > 256<<10 {
 			writeErr(w, http.StatusBadRequest, "sieve.too_large", "")

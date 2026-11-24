@@ -774,7 +774,7 @@ func TestIntegrationPriorityAndMDN(t *testing.T) {
 	// Уведомление пришло отправителю (тому же ящику).
 	found := false
 	for i := 0; i < 50 && !found; i++ {
-		_, page := c.do("GET", "/api/v1/messages?folder=INBOX&q="+url.QueryEscape("Прочитано: "+subj), nil)
+		_, page := c.do("GET", "/api/v1/messages?folder=INBOX&q="+url.QueryEscape("Read: "+subj), nil)
 		found = len(page["messages"].([]any)) > 0
 		if !found {
 			time.Sleep(100 * time.Millisecond)

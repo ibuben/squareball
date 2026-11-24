@@ -51,7 +51,7 @@ func (s *Server) handleMDN(w http.ResponseWriter, r *http.Request) {
 		}
 		raw, err := mail.BuildMDN(mail.MDN{
 			From: mail.Address{Email: sess.Mailbox}, To: m.MDNTo, Subject: m.Subject,
-			MessageID: m.MessageID, Date: m.Date, Automatic: in.Auto,
+			MessageID: m.MessageID, Date: m.Date, Automatic: in.Auto, Lang: s.Lang(r),
 		})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal", "")

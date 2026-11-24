@@ -24,22 +24,28 @@ function stored(): Lang | null {
 }
 
 const current = ref<Lang>(stored() ?? 'en')
-document.documentElement.lang = current.value
+
+// Язык виден и серверу (cookie wm_lang): на нём он пишет уведомления о прочтении,
+// ответы на приглашения и имена правил фильтров.
+function apply(l: Lang) {
+  current.value = l
+  document.documentElement.lang = l
+  document.cookie = `wm_lang=${l}; path=/; max-age=31536000; samesite=lax`
+}
+apply(current.value)
 
 export const lang = () => current.value
 
 // Явный выбор пользователя — запоминается в браузере.
 export function setLang(l: Lang) {
-  current.value = l
-  document.documentElement.lang = l
+  apply(l)
   try { localStorage.setItem(STORE, l) } catch { /* приватный режим */ }
 }
 
 // Язык установки (ui.default_language) — только если пользователь ещё не выбирал сам.
 export function setDefaultLang(l: unknown) {
   if (stored() || !isLang(l)) return
-  current.value = l
-  document.documentElement.lang = l
+  apply(l)
 }
 
 // Языки, которые можно выбрать: из ui.languages те, для которых есть словарь.

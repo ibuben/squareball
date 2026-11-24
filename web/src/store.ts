@@ -4,7 +4,7 @@ import {
   type Prefs, type Summary, type Template, type UIConfig,
 } from './api'
 import { applyBrand } from './brand'
-import { setDefaultLang, t, type Key } from './i18n'
+import { availableLangs, isLang, setDefaultLang, setLang, t, type Key } from './i18n'
 
 export interface ComposeInit {
   to?: Address[]; cc?: Address[]; bcc?: Address[]; subject?: string
@@ -147,6 +147,7 @@ const folderErrors: Record<string, Key> = {
   'folder.exists': 'folder.err.exists',
   'folder.protected': 'folder.err.protected',
   'mail.not_found': 'folder.err.notFound',
+  'import.unreadable': 'import.unreadable',
 }
 
 function folderError(e: unknown) {
@@ -506,6 +507,21 @@ async function loadConfig() {
   } catch { /* экран входа работает и без конфига */ }
 }
 
+// Язык и тема из адреса: /?lang=ru&theme=dark. Так их передаёт панель при входе по SSO,
+// и это работает для любой ссылки на почту. Действует как выбор пользователя (запоминается);
+// неизвестные и выключенные в ui.languages значения пропускаются. Параметры убираются из адреса.
+function applyUrlPrefs() {
+  const u = new URL(location.href)
+  const l = u.searchParams.get('lang')
+  const th = u.searchParams.get('theme') as Theme | null
+  if (l === null && th === null) return
+  if (isLang(l) && availableLangs(state.config?.languages).includes(l)) setLang(l)
+  if (th && THEMES.includes(th)) setTheme(th)
+  u.searchParams.delete('lang')
+  u.searchParams.delete('theme')
+  history.replaceState(history.state, '', u.pathname + u.search + u.hash)
+}
+
 export async function boot() {
   const cfg = loadConfig()
   try {
@@ -514,6 +530,7 @@ export async function boot() {
     if (!(e instanceof ApiError && e.status === 401)) console.error(e)
   } finally {
     await cfg // язык установки — до первой отрисовки
+    applyUrlPrefs()
     state.booting = false
   }
 }

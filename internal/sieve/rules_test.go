@@ -37,7 +37,7 @@ func TestRoundTrip(t *testing.T) {
 	if err := in.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	script := in.Script()
+	script := in.Script("ru")
 	out, err := FromScript(script)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, script)
@@ -56,7 +56,7 @@ func TestRoundTrip(t *testing.T) {
 
 func TestForwardWithoutCopyStops(t *testing.T) {
 	rs := &Ruleset{Forward: Forward{Enabled: true, To: "a@b"}}
-	s := rs.Script()
+	s := rs.Script("ru")
 	if !strings.Contains(s, "redirect \"a@b\";\n\tstop;") {
 		t.Fatalf("no stop after redirect:\n%s", s)
 	}

@@ -2,7 +2,7 @@
 
 Адаптер `adapters/panel` входит в стандартный бинарь и даёт панели два механизма:
 
-- **Вход в почту без пароля (SSO).** Панель подписывает одноразовую ссылку и отправляет по ней браузер. Webmail входит в IMAP и SMTP мастер-учёткой Dovecot, поэтому пароль ящика панели знать не нужно.
+- **Вход в почту без пароля (SSO).** Панель подписывает одноразовую ссылку и отправляет по ней браузер. Webmail входит в IMAP и SMTP мастер-учёткой Dovecot, поэтому пароль ящика панели знать не нужно. Панель может передать свои язык и тему, и почта откроется так же (раздел 3).
 - **Служебный API.** Через него панель завершает сессии ящика и удаляет данные, которые webmail хранит о нём.
 
 Смена пароля из webmail в панель описана отдельно: [password.md](password.md) (драйвер `http` или `exec`).
@@ -98,19 +98,44 @@ JSON:
 | `sub` | ящик `local@domain`, регистр не важен |
 | `exp` | unix-время окончания, обычно сейчас + 60 с; не дальше `max_ttl` |
 | `jti` | случайная строка 16–128 символов; второй раз токен не примут |
+| `lang` | необязательно: язык интерфейса, `en` или `ru` |
+| `theme` | необязательно: тема, `light`, `dark` или `system` (как в системе пользователя) |
 
-Браузер отправляется либо `GET /sso/panel?token=…`, либо формой `POST /sso/panel` с полем `token`. Форма лучше: токен не попадёт в журналы прокси и историю браузера. При успехе webmail ставит cookie сессии и перенаправляет на `/` (303). При ошибке отвечает 403 со страницей «ссылка недействительна» или перенаправляет на `error_url`. Причина отказа пишется в журнал с `audit=true`: подпись, срок, повтор или домен.
+### Язык и тема панели
+
+Чтобы почта открылась на языке панели и в её цветовом режиме, передайте в токене
+`lang` и `theme`. Они подписаны вместе с остальными полями, поэтому подменить их по
+дороге нельзя.
+
+- Значения панели важнее выбора, сохранённого в браузере. Почта запомнит их как выбор
+  пользователя: при следующем входе по паролю в этом браузере будут те же язык и тема.
+  Передавайте поля при каждом входе, тогда смена языка или темы в панели сразу дойдёт до почты.
+- Если поле не передано, остаётся то, что выбрано в браузере. Если там ничего не выбрано,
+  действуют `ui.default_language` и `ui.theme`.
+- Неизвестное значение или язык, выключенный в `ui.languages`, не считается ошибкой:
+  вход проходит, а поле пропускается. Регистр и пробелы по краям не важны. Регион
+  (`ru-RU`, `en-US`) не нужен: передавайте код языка.
+- Язык действует и для писем, которые формирует сервер: уведомлений о прочтении,
+  ответов на приглашения, имён правил «Автоответ»/«Пересылка» в фильтрах.
+
+Как это работает: после входа webmail перенаправляет браузер на `/?lang=…&theme=…`, клиент
+применяет значения и убирает их из адреса. Те же параметры понимает любая ссылка на почту,
+например `https://mail.example.com/?lang=ru` с экрана входа панели без SSO.
+
+Браузер отправляется либо `GET /sso/panel?token=…`, либо формой `POST /sso/panel` с полем `token`. Форма лучше: токен не попадёт в журналы прокси и историю браузера. При успехе webmail ставит cookie сессии и перенаправляет на `/` (303), а если в токене есть `lang` или `theme`, то на `/?lang=…&theme=…`. При ошибке отвечает 403 со страницей «ссылка недействительна» на языке пользователя (cookie `wm_lang`, иначе `Accept-Language`, иначе `ui.default_language`) или перенаправляет на `error_url`. Причина отказа пишется в журнал с `audit=true`: подпись, срок, повтор или домен.
 
 Часы панели и почтового сервера могут расходиться до 30 секунд.
 
 PHP:
 
 ```php
-function webmail_sso_token(string $mailbox, string $key, int $ttl = 60): string {
+// $lang — 'en' | 'ru', $theme — 'light' | 'dark' | 'system'; null — не передавать.
+function webmail_sso_token(string $mailbox, string $key, ?string $lang = null, ?string $theme = null, int $ttl = 60): string {
     $b64 = fn(string $s) => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
-    $payload = 'v1.' . $b64(json_encode([
+    $payload = 'v1.' . $b64(json_encode(array_filter([
         'sub' => $mailbox, 'exp' => time() + $ttl, 'jti' => bin2hex(random_bytes(16)),
-    ]));
+        'lang' => $lang, 'theme' => $theme,
+    ])));
     return $payload . '.' . $b64(hash_hmac('sha256', $payload, $key, true));
 }
 // $key = trim(file_get_contents('/etc/panel/webmail-sso.key'));
@@ -118,7 +143,7 @@ function webmail_sso_token(string $mailbox, string $key, int $ttl = 60): string 
 
 ```html
 <form method="post" action="https://mail.example.com/sso/panel" target="_blank">
-  <input type="hidden" name="token" value="<?= htmlspecialchars(webmail_sso_token($mailbox, $key)) ?>">
+  <input type="hidden" name="token" value="<?= htmlspecialchars(webmail_sso_token($mailbox, $key, $user->lang, $user->theme)) ?>">
   <button>Открыть почту</button>
 </form>
 ```
@@ -127,12 +152,12 @@ Shell (для проверки):
 
 ```sh
 b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
-payload="v1.$(printf '{"sub":"%s","exp":%d,"jti":"%s"}' bob@example.com $(( $(date +%s) + 60 )) "$(openssl rand -hex 16)" | b64url)"
+payload="v1.$(printf '{"sub":"%s","exp":%d,"jti":"%s","lang":"ru","theme":"dark"}' bob@example.com $(( $(date +%s) + 60 )) "$(openssl rand -hex 16)" | b64url)"
 sig=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$(cat /etc/webmail/panel-sso.key)" -binary | b64url)
 echo "https://mail.example.com/sso/panel?token=$payload.$sig"
 ```
 
-Go: `panel.Sign(key, panel.Claims{Sub: …, Exp: …, Jti: …})`.
+Go: `panel.Sign(key, panel.Claims{Sub: …, Exp: …, Jti: …, Lang: "ru", Theme: "dark"})`.
 
 ## 4. Служебный API
 

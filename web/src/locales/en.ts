@@ -101,6 +101,7 @@ const dict = {
   'import.dups': 'already present: {n}',
   'import.tooLarge': 'too large: {n}',
   'import.failed': 'rejected by server: {n}',
+  'import.unreadable': 'Could not read the file: it is damaged or is not .mbox / .eml',
   'toast.archived': 'Moved to Archive',
   'sieve.conflict': 'Filters were changed elsewhere (for example, in Roundcube). The current version has been loaded — please repeat your changes.',
   'folder.new': 'New folder',

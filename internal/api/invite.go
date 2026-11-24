@@ -110,7 +110,7 @@ func (s *Server) handleInviteReply(w http.ResponseWriter, r *http.Request) {
 	self, _ := s.inviteSelf(r, sess, m.Invite)
 	raw, to, err := mail.BuildInviteReply(mail.InviteReply{
 		ICS: m.InviteICS, From: self, PartStat: in.PartStat, Comment: in.Comment,
-		Subject: m.Subject, MessageID: m.MessageID,
+		Subject: m.Subject, MessageID: m.MessageID, Lang: s.Lang(r),
 	})
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "invite.invalid", "")

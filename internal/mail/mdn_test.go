@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-message"
+	gomail "github.com/emersion/go-message/mail"
 )
 
 func TestParsePriority(t *testing.T) {
@@ -86,6 +87,34 @@ func TestBuildMDN(t *testing.T) {
 		"Disposition: manual-action/MDN-sent-manually; displayed"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("report misses %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestBuildMDNLang(t *testing.T) {
+	for lang, want := range map[string][2]string{
+		"":   {"Read: Hi", "was displayed to the recipient"},
+		"ru": {"Прочитано: Hi", "было показано получателю"},
+	} {
+		raw, err := BuildMDN(MDN{From: Address{Email: "bob@test.local"}, To: "alice@test.local", Subject: "Hi",
+			Date: time.Now(), Lang: lang})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, err := message.Read(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subj, _ := (&gomail.Header{Header: e.Header}).Subject(); subj != want[0] {
+			t.Errorf("lang %q: subject %q", lang, subj)
+		}
+		p, err := e.MultipartReader().NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(p.Body)
+		if !strings.Contains(string(body), want[1]) {
+			t.Errorf("lang %q: body %q", lang, body)
 		}
 	}
 }

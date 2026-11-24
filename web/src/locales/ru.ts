@@ -102,6 +102,7 @@ const dict: Record<Key, string> = {
   'import.dups': 'уже были: {n}',
   'import.tooLarge': 'слишком большие: {n}',
   'import.failed': 'не приняты сервером: {n}',
+  'import.unreadable': 'Не удалось прочитать файл: он повреждён или это не .mbox / .eml',
   'toast.archived': 'Перемещено в архив',
   'sieve.conflict': 'Фильтры изменились в другом месте (например, в Roundcube). Загружена актуальная версия — повторите изменения.',
   'folder.new': 'Новая папка',

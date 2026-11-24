@@ -105,7 +105,7 @@ func TestParseInviteTimezones(t *testing.T) {
 func TestBuildInviteReply(t *testing.T) {
 	raw, to, err := BuildInviteReply(InviteReply{
 		ICS: outlookInvite, From: Address{Name: "Bob", Email: "bob@test.local"}, PartStat: PartAccepted,
-		Comment: "Буду", MessageID: "orig@test.local",
+		Comment: "Буду", MessageID: "orig@test.local", Lang: "ru",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -183,6 +183,37 @@ func TestIsCalendarPart(t *testing.T) {
 	} {
 		if got := isCalendarPart(c.ct, c.name); got != c.want {
 			t.Errorf("%s %s: %v", c.ct, c.name, got)
+		}
+	}
+}
+
+// Язык ответа: английский по умолчанию и для неизвестного языка.
+func TestBuildInviteReplyLang(t *testing.T) {
+	for lang, want := range map[string][2]string{
+		"":   {"Declined: Планёрка", "Bob <bob@test.local> has declined the invitation “Планёрка”."},
+		"xx": {"Declined: Планёрка", "has declined"},
+		"ru": {"Отклонено: Планёрка", "отклоняет приглашение «Планёрка»"},
+	} {
+		raw, _, err := BuildInviteReply(InviteReply{
+			ICS: outlookInvite, From: Address{Name: "Bob", Email: "bob@test.local"}, PartStat: PartDeclined, Lang: lang,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, err := message.Read(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subj, _ := (&gomail.Header{Header: e.Header}).Subject(); subj != want[0] {
+			t.Errorf("lang %q: subject %q", lang, subj)
+		}
+		p, err := e.MultipartReader().NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(p.Body)
+		if !strings.Contains(string(body), want[1]) {
+			t.Errorf("lang %q: body %q", lang, body)
 		}
 	}
 }

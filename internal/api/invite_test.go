@@ -98,7 +98,7 @@ func TestIntegrationInvite(t *testing.T) {
 	}
 
 	alice := itLogin(t, ts.URL, "alice")
-	got := waitMessage(alice, "INBOX", "Принято: "+tag)
+	got := waitMessage(alice, "INBOX", "Accepted: "+tag)
 	if got == nil {
 		t.Fatal("REPLY did not arrive to organizer")
 	}

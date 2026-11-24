@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -178,6 +179,11 @@ type Claims struct {
 	Sub string `json:"sub"` // ящик local@domain
 	Exp int64  `json:"exp"` // unix-время, до которого токен действителен
 	Jti string `json:"jti"` // случайный идентификатор: второй раз токен не примут
+	// Необязательные: язык интерфейса ("en", "ru") и тема ("light", "dark", "system"),
+	// чтобы почта открылась как панель. Заменяют выбор, сохранённый в браузере.
+	// Неизвестные значения не ошибка — клиент их пропустит.
+	Lang  string `json:"lang,omitempty"`
+	Theme string `json:"theme,omitempty"`
 }
 
 var (
@@ -273,28 +279,69 @@ func (a *Adapter) handleSSO(w http.ResponseWriter, r *http.Request) {
 	c, err := a.verify(token)
 	if err != nil {
 		a.core.Logger().Warn("panel sso rejected", "audit", true, "reason", err.Error(), "mailbox", c.Sub, "ip", ip)
-		a.fail(w, r, http.StatusForbidden, "Ссылка для входа недействительна или устарела. Откройте почту из панели ещё раз.")
+		a.fail(w, r, http.StatusForbidden, "bad_link")
 		return
 	}
 	err = a.core.StartSession(w, r, ext.SessionGrant{Mailbox: c.Sub, AuthMode: ext.AuthImpersonation, Source: Source})
 	if err != nil {
 		a.core.Logger().Error("panel sso: start session", "err", err, "mailbox", c.Sub, "ip", ip)
-		a.fail(w, r, http.StatusBadGateway, "Не удалось открыть почтовый ящик. Попробуйте позже или обратитесь в поддержку.")
+		a.fail(w, r, http.StatusBadGateway, "unavailable")
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, landing(c), http.StatusSeeOther)
 }
 
-func (a *Adapter) fail(w http.ResponseWriter, r *http.Request, status int, msg string) {
+// prefValue — короткое значение из латиницы и дефиса ("ru", "pt-br", "dark"); иное отбрасывается.
+var prefValue = regexp.MustCompile(`^[a-z]{2,8}(-[a-z0-9]{1,8})?$`)
+
+// landing — куда отправить браузер после входа: язык и тему из токена клиент
+// применит и уберёт из адреса (?lang=…&theme=…).
+func landing(c Claims) string {
+	q := url.Values{}
+	if l := strings.ToLower(strings.TrimSpace(c.Lang)); prefValue.MatchString(l) {
+		q.Set("lang", l)
+	}
+	if th := strings.ToLower(strings.TrimSpace(c.Theme)); prefValue.MatchString(th) {
+		q.Set("theme", th)
+	}
+	if len(q) == 0 {
+		return "/"
+	}
+	return "/?" + q.Encode()
+}
+
+// failTexts — страница ошибки входа по языку пользователя (core.Lang).
+var failTexts = map[string]map[string]string{
+	"en": {
+		"title":       "Mail sign-in",
+		"bad_link":    "The sign-in link is invalid or has expired. Open your mail from the control panel again.",
+		"unavailable": "Could not open the mailbox. Try again later or contact support.",
+		"password":    "Sign in with password",
+	},
+	"ru": {
+		"title":       "Вход в почту",
+		"bad_link":    "Ссылка для входа недействительна или устарела. Откройте почту из панели ещё раз.",
+		"unavailable": "Не удалось открыть почтовый ящик. Попробуйте позже или обратитесь в поддержку.",
+		"password":    "Войти по паролю",
+	},
+}
+
+func (a *Adapter) fail(w http.ResponseWriter, r *http.Request, status int, reason string) {
 	if a.cfg.ErrorURL != "" {
 		http.Redirect(w, r, a.cfg.ErrorURL, http.StatusSeeOther)
 		return
 	}
+	lang := a.core.Lang(r)
+	tx, ok := failTexts[lang]
+	if !ok {
+		lang, tx = "en", failTexts["en"]
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">`+
-		`<title>Вход в почту</title><body style="font:16px system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px">`+
-		`<p>%s</p><p><a href="/">Войти по паролю</a></p></body>`, html.EscapeString(msg))
+	fmt.Fprintf(w, `<!doctype html><html lang="%s"><meta charset="utf-8"><meta name="viewport" content="width=device-width">`+
+		`<title>%s</title><body style="font:16px system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px">`+
+		`<p>%s</p><p><a href="/">%s</a></p></body>`,
+		lang, html.EscapeString(tx["title"]), html.EscapeString(tx[reason]), html.EscapeString(tx["password"]))
 }
 
 // --- служебный API ----------------------------------------------------------------
