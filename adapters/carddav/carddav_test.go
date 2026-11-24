@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ibuben/squareball/adapters/internal/dav"
 	"github.com/ibuben/squareball/ext"
 )
 
 func TestPresets(t *testing.T) {
 	a := &Adapter{cfg: Config{Presets: []Preset{
 		{ID: "all", Name: "Все", URL: "https://dav.example.com/%u/", Username: "%l", Password: "session"},
-		{ID: "corp", URL: "https://dav.corp/%d/", Username: "svc", PasswordFile: "x", secret: "s3", Domains: []string{"Corp.Test"}},
+		{ID: "corp", URL: "https://dav.corp/%d/", Username: "svc", PasswordFile: "x", Secret: "s3", Domains: []string{"Corp.Test"}},
 	}}}
 	got := a.Presets("ivan petrov@corp.test")
 	if len(got) != 2 || got[0].Account.URL != "https://dav.example.com/ivan%20petrov@corp.test/" || got[0].Account.Username != "ivan petrov" ||
@@ -34,7 +35,7 @@ func TestPrivateNetworksBlocked(t *testing.T) {
 			t.Errorf("publicIP(%s) != %v", ip, ok)
 		}
 	}
-	a := &Adapter{public: newHTTPClient(5*time.Second, false), trusted: newHTTPClient(5*time.Second, true)}
+	a := &Adapter{hc: dav.Clients{Public: newHTTPClient(5*time.Second, false), Trusted: newHTTPClient(5*time.Second, true), Agent: "test"}}
 	_, err := a.Discover(context.Background(), ext.ContactAccount{URL: "http://127.0.0.1:5232/alice/", Username: "alice", Password: "x"})
 	if !errors.Is(err, ext.ErrContactForbidden) {
 		t.Fatalf("loopback must be forbidden for user accounts: %v", err)
@@ -47,7 +48,7 @@ func TestRadicale(t *testing.T) {
 		t.Skip("set WEBMAIL_IT=1 with Radicale on 127.0.0.1:5232")
 	}
 	ctx := context.Background()
-	a := &Adapter{public: newHTTPClient(10*time.Second, true), trusted: newHTTPClient(10*time.Second, true)}
+	a := &Adapter{hc: dav.Clients{Public: newHTTPClient(10*time.Second, true), Trusted: newHTTPClient(10*time.Second, true), Agent: "test"}}
 	acc := ext.ContactAccount{URL: "http://127.0.0.1:5232/", Username: "alice", Password: "Test12345!"}
 	if _, err := a.Discover(ctx, ext.ContactAccount{URL: acc.URL, Username: "alice", Password: "bad"}); !errors.Is(err, ext.ErrContactAuth) {
 		t.Fatalf("bad password: %v", err)

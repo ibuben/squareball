@@ -26,42 +26,25 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/emersion/go-vcard"
-	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/carddav"
 
+	"github.com/ibuben/squareball/adapters/internal/dav"
 	"github.com/ibuben/squareball/ext"
 )
 
 const (
-	maxResponse = 64 << 20 // ответ сервера, байт
-	maxCard     = 1 << 20  // одна карточка
-	maxBooks    = 50
+	maxCard  = 1 << 20 // одна карточка
+	maxBooks = 50
 )
 
-type Preset struct {
-	ID           string   `yaml:"id"`
-	Name         string   `yaml:"name"`
-	URL          string   `yaml:"url"`
-	Username     string   `yaml:"username"`
-	Password     string   `yaml:"password"` // "session" — пароль ящика
-	PasswordFile string   `yaml:"password_file"`
-	ReadOnly     bool     `yaml:"readonly"`
-	Domains      []string `yaml:"domains"`
-
-	secret string
-}
+type Preset = dav.Preset
 
 type Config struct {
 	Enabled              bool          `yaml:"enabled"`
@@ -72,9 +55,8 @@ type Config struct {
 }
 
 type Adapter struct {
-	cfg     Config
-	trusted *http.Client // пресеты: адреса из конфига администратора
-	public  *http.Client // учётки пользователей: без внутренних сетей
+	cfg Config
+	hc  dav.Clients
 }
 
 func New() *Adapter { return &Adapter{} }
@@ -89,35 +71,11 @@ func (a *Adapter) Init(_ context.Context, node ext.ConfigNode, core ext.Core) er
 	if cfg.Timeout <= 0 {
 		return errors.New("timeout must be positive")
 	}
-	ids := map[string]bool{}
-	for i := range cfg.Presets {
-		p := &cfg.Presets[i]
-		if p.ID == "" || ids[p.ID] {
-			return fmt.Errorf("presets[%d].id: required and unique", i)
-		}
-		ids[p.ID] = true
-		if u, err := url.Parse(strings.NewReplacer("%u", "u", "%l", "l", "%d", "d").Replace(p.URL)); err != nil ||
-			(u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return fmt.Errorf("presets[%d].url: must be http(s)://host/...", i)
-		}
-		switch {
-		case p.Password == "session" && p.PasswordFile == "":
-		case p.Password == "" && p.PasswordFile != "":
-			b, err := os.ReadFile(p.PasswordFile)
-			if err != nil {
-				return fmt.Errorf("presets[%d].password_file: %w", i, err)
-			}
-			p.secret = strings.TrimRight(string(b), "\r\n")
-		default:
-			return fmt.Errorf("presets[%d]: set password: session or password_file", i)
-		}
-		if p.Name == "" {
-			p.Name = p.ID
-		}
+	if err := dav.CheckPresets(cfg.Presets); err != nil {
+		return err
 	}
 	a.cfg = cfg
-	a.trusted = newHTTPClient(cfg.Timeout, true)
-	a.public = newHTTPClient(cfg.Timeout, cfg.AllowPrivateNetworks)
+	a.hc = dav.NewClients(cfg.Timeout, cfg.AllowPrivateNetworks, "webmail-carddav")
 	core.SetContactSource(a)
 	core.Logger().Info("carddav", "presets", len(cfg.Presets), "user_accounts", cfg.AllowUserAccounts)
 	return nil
@@ -128,33 +86,17 @@ func (a *Adapter) Init(_ context.Context, node ext.ConfigNode, core ext.Core) er
 func (a *Adapter) AllowUserAccounts() bool { return a.cfg.AllowUserAccounts }
 
 func (a *Adapter) Presets(mailbox string) []ext.ContactPreset {
-	local, domain, _ := strings.Cut(mailbox, "@")
-	r := strings.NewReplacer("%u", mailbox, "%l", local, "%d", domain)
-	// В URL подставляем с экранированием: адрес ящика — часть пути.
-	ru := strings.NewReplacer("%u", url.PathEscape(mailbox), "%l", url.PathEscape(local), "%d", url.PathEscape(domain))
 	var out []ext.ContactPreset
 	for _, p := range a.cfg.Presets {
-		if len(p.Domains) > 0 && !containsFold(p.Domains, domain) {
-			continue
+		if acc, ok := p.Account(mailbox); ok {
+			out = append(out, ext.ContactPreset{ID: p.ID, Name: p.Name, ReadOnly: p.ReadOnly, Account: acc})
 		}
-		pw := p.secret
-		if p.Password == "session" {
-			pw = ext.PasswordSession
-		}
-		out = append(out, ext.ContactPreset{
-			ID: p.ID, Name: p.Name, ReadOnly: p.ReadOnly,
-			Account: ext.ContactAccount{URL: ru.Replace(p.URL), Username: r.Replace(p.Username), Password: pw, Trusted: true},
-		})
 	}
 	return out
 }
 
 func (a *Adapter) client(acc ext.ContactAccount, endpoint string) (*carddav.Client, error) {
-	hc := a.public
-	if acc.Trusted {
-		hc = a.trusted
-	}
-	return carddav.NewClient(&authClient{c: hc, user: acc.Username, pass: acc.Password}, endpoint)
+	return carddav.NewClient(a.hc.For(acc), endpoint)
 }
 
 // Discover: адрес может указывать на сервер, принципала, набор книг или саму книгу.
@@ -291,7 +233,7 @@ func (a *Adapter) Put(ctx context.Context, acc ext.ContactAccount, book, href, e
 	} else if etag != "" {
 		h.Set("If-Match", `"`+etag+`"`)
 	}
-	resp, err := a.do(ctx, acc, http.MethodPut, bu.ResolveReference(&url.URL{Path: href}).String(), h, card)
+	resp, err := a.hc.Do(ctx, acc, http.MethodPut, bu.ResolveReference(&url.URL{Path: href}).String(), h, card)
 	if err != nil {
 		return "", "", err
 	}
@@ -313,158 +255,14 @@ func (a *Adapter) Delete(ctx context.Context, acc ext.ContactAccount, book, href
 	if etag != "" {
 		h.Set("If-Match", `"`+etag+`"`)
 	}
-	_, err = a.do(ctx, acc, http.MethodDelete, bu.ResolveReference(&url.URL{Path: href}).String(), h, nil)
+	_, err = a.hc.Do(ctx, acc, http.MethodDelete, bu.ResolveReference(&url.URL{Path: href}).String(), h, nil)
 	return err
 }
 
-// do выполняет PUT/DELETE и переводит коды ответа в ошибки ext.
-func (a *Adapter) do(ctx context.Context, acc ext.ContactAccount, method, u string, h http.Header, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header = h
-	hc := a.public
-	if acc.Trusted {
-		hc = a.trusted
-	}
-	resp, err := (&authClient{c: hc, user: acc.Username, pass: acc.Password}).Do(req)
-	if err != nil {
-		return nil, mapErr(err)
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	switch {
-	case resp.StatusCode/100 == 2:
-		return resp, nil
-	case resp.StatusCode == http.StatusPreconditionFailed:
-		return nil, ext.ErrContactConflict
-	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed:
-		return nil, ext.ErrContactReadOnly
-	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
-		return nil, ext.ErrContactNotFound
-	}
-	return nil, fmt.Errorf("carddav: %s %s: %s", method, u, resp.Status)
-}
-
-// --- HTTP ---------------------------------------------------------------------------
-
-// authClient добавляет Basic-авторизацию, ограничивает размер ответа
-// и превращает 401 в ext.ErrContactAuth.
-type authClient struct {
-	c          *http.Client
-	user, pass string
-}
-
-func (c *authClient) Do(req *http.Request) (*http.Response, error) {
-	if c.user != "" || c.pass != "" {
-		req.SetBasicAuth(c.user, c.pass)
-	}
-	req.Header.Set("User-Agent", "webmail-carddav")
-	resp, err := c.c.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		resp.Body.Close()
-		return nil, ext.ErrContactAuth
-	}
-	resp.Body = &limitedBody{rc: resp.Body, n: maxResponse}
-	return resp, nil
-}
-
-type limitedBody struct {
-	rc io.ReadCloser
-	n  int64
-}
-
-func (l *limitedBody) Read(p []byte) (int, error) {
-	if l.n <= 0 {
-		return 0, errors.New("carddav: response too large")
-	}
-	if int64(len(p)) > l.n {
-		p = p[:l.n]
-	}
-	n, err := l.rc.Read(p)
-	l.n -= int64(n)
-	return n, err
-}
-
-func (l *limitedBody) Close() error { return l.rc.Close() }
-
-var errPrivate = fmt.Errorf("%w: private network", ext.ErrContactForbidden)
-
-func newHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
-	d := &net.Dialer{Timeout: 10 * time.Second}
-	if !allowPrivate {
-		// Проверяем адрес, к которому реально подключаемся (после DNS), —
-		// так не обойти запрет через имя, указывающее во внутреннюю сеть.
-		d.Control = func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			ip := net.ParseIP(host)
-			if ip == nil || !publicIP(ip) {
-				return errPrivate
-			}
-			return nil
-		}
-	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.DialContext = d.DialContext
-	tr.Proxy = nil
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			// Учётные данные — только на тот же хост.
-			if req.URL.Host != via[0].URL.Host {
-				req.Header.Del("Authorization")
-			}
-			return nil
-		},
-	}
-}
-
-func publicIP(ip net.IP) bool {
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() ||
-		// CGNAT 100.64/10 и прочие служебные диапазоны
-		cgnat.Contains(ip))
-}
-
-var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
-
-func mapErr(err error) error {
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, ext.ErrContactAuth), errors.Is(err, ext.ErrContactForbidden),
-		errors.Is(err, ext.ErrContactNotFound), errors.Is(err, ext.ErrContactConflict):
-		return err
-	}
-	if strings.Contains(err.Error(), "404") {
-		return fmt.Errorf("%w: %v", ext.ErrContactNotFound, err)
-	}
-	return err
-}
-
-func normETag(s string) string {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "W/")
-	return strings.Trim(s, `"`)
-}
-
-func containsFold(list []string, s string) bool {
-	for _, x := range list {
-		if strings.EqualFold(x, s) {
-			return true
-		}
-	}
-	return false
-}
-
-var _ webdav.HTTPClient = (*authClient)(nil)
+// Псевдонимы общих функций пакета dav.
+var (
+	mapErr        = dav.MapErr
+	normETag      = dav.NormETag
+	publicIP      = dav.PublicIP
+	newHTTPClient = dav.NewHTTPClient
+)
