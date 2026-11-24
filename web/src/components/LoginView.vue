@@ -52,9 +52,8 @@ async function submit() {
     </div>
     <form class="card" @submit.prevent="submit">
       <div class="logo">
-        <img v-if="brandLogo(brand, state.dark)" :src="brandLogo(brand, state.dark)" alt="" />
-        <Mail v-else :size="28" />
-        <span>{{ brand.name }}</span>
+        <img v-if="brandLogo(brand, state.dark)" :src="brandLogo(brand, state.dark)" :alt="brand.name || ''" />
+        <Mail v-else :size="48" aria-hidden="true" />
       </div>
       <h1>{{ t('login.title') }}</h1>
       <label>
@@ -85,9 +84,9 @@ async function submit() {
   width: 100%; max-width: 360px; background: var(--pane); border: 1px solid var(--border);
   border-radius: 12px; padding: 28px; display: grid; gap: 14px; box-shadow: var(--shadow);
 }
-.logo { display: flex; align-items: center; gap: 10px; color: var(--accent); font-weight: 600; font-size: 15px; }
-.logo img { height: 28px; }
-h1 { margin: 4px 0 6px; font-size: 20px; }
+.logo { display: flex; justify-content: center; align-items: center; color: var(--accent); margin-bottom: 4px; }
+.logo img { height: 56px; max-width: 100%; object-fit: contain; }
+h1 { margin: 4px 0 6px; font-size: 20px; text-align: center; }
 .card label { display: grid; gap: 6px; color: var(--text-2); }
 .error { margin: 0; color: var(--danger); }
 .submit { height: 36px; justify-content: center; margin-top: 4px; }

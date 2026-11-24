@@ -23,6 +23,7 @@ const reading = ref<InstanceType<typeof ReadingPane>>()
 const menu = ref(false)
 const about = ref(false)
 const showAbout = computed(() => !state.me?.brand.hide_about)
+const headerLogo = computed(() => brandLogo(state.me?.brand, state.dark))
 const drawer = ref(false) // панель папок на узких экранах
 
 // Ширины панелей можно менять перетаскиванием; сохраняются в браузере.
@@ -140,10 +141,10 @@ onBeforeUnmount(() => {
   <div class="shell" :class="{ reading: state.current, drawer }">
     <header class="top">
       <button class="icon-btn burger" :aria-label="t('nav.mail')" @click="drawer = !drawer"><Menu :size="19" /></button>
-      <div class="brand">
-        <img v-if="brandLogo(state.me?.brand, state.dark)" :src="brandLogo(state.me?.brand, state.dark)" alt="" />
-        <Mail v-else :size="18" />
-        <span>{{ state.me?.brand.name }}</span>
+      <div class="brand" :title="state.me?.brand.name">
+        <span v-if="headerLogo" class="brand-logo" role="img" :aria-label="state.me?.brand.name || ''"
+              :style="{ maskImage: `url(${headerLogo})`, WebkitMaskImage: `url(${headerLogo})` }" />
+        <Mail v-else :size="20" aria-hidden="true" />
       </div>
       <div class="spacer" />
       <ThemeToggle class="narrow" :size="17" />
@@ -192,8 +193,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .shell { height: 100%; display: grid; grid-template-rows: 44px 1fr; }
 .top { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; background: var(--pane); border-bottom: 1px solid var(--border); }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--accent); }
-.brand img { height: 22px; }
+.brand { display: flex; align-items: center; color: var(--accent); min-width: 0; }
+/* Full logo as a silhouette, painted with the theme accent. */
+.brand-logo {
+  display: block; height: 32px; width: min(240px, 50vw); background: var(--accent);
+  mask-size: contain; mask-repeat: no-repeat; mask-position: left center;
+  -webkit-mask-size: contain; -webkit-mask-repeat: no-repeat; -webkit-mask-position: left center;
+}
 .spacer { flex: 1; }
 .user { position: relative; }
 .userbtn { max-width: 240px; height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 15px; background: var(--pane-alt); }

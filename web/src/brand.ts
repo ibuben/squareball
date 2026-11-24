@@ -47,6 +47,10 @@ const isDark = () => document.documentElement.dataset.theme === 'dark'
 export const brandLogo = (b: Brand | null | undefined, dark: boolean) =>
   (dark && b?.logo_dark_url) || b?.logo_url || ''
 
+// Компактная метка в шапке: favicon, иначе тот же логотип, что на входе.
+export const brandIcon = (b: Brand | null | undefined, dark: boolean) =>
+  b?.favicon_url || brandLogo(b, dark)
+
 function setFavicon(href: string) {
   let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
   if (!href) { link?.remove(); return }
