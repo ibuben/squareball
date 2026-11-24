@@ -39,6 +39,10 @@
 }
 
 * { box-sizing: border-box; }
+/* Пункты выпадающего списка: у select бывает прозрачный фон, а браузер рисует
+   список на своём фоне — без явных цветов в тёмной теме текст сливается с фоном. */
+select option, select optgroup { background-color: var(--pane); color: var(--text); }
+select option:disabled { color: var(--text-3); }
 html, body, #app { height: 100%; margin: 0; }
 body {
   background: var(--bg);
