@@ -243,6 +243,19 @@ func Run(ctx context.Context, cfgPath string, adapters ...ext.Adapter) error {
 		log.Warn("adapter did not register password driver; password change is disabled", "driver", cfg.Password.Driver)
 	}
 
+	if cfg.Metrics.Listen != "" {
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", srv.MetricsHandler(Version))
+		ms := &http.Server{Addr: cfg.Metrics.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			log.Info("metrics", "addr", cfg.Metrics.Listen)
+			if err := ms.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("metrics", "err", err)
+			}
+		}()
+		defer ms.Close()
+	}
+
 	hs := &http.Server{
 		Addr: cfg.Server.Listen, Handler: srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second,

@@ -41,6 +41,13 @@ jobs:
       - name: go test
         run: go test -race ./...
 
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: npm audit (runtime dependencies)
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Build binary with embedded SPA
         run: make build
 

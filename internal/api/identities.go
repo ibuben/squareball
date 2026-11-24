@@ -86,7 +86,7 @@ func (s *Server) handleSaveIdentity(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "identity.too_long", "")
 		return
 	}
-	in.Signature = sanitize.Email(in.Signature, func(string) string { return "" }, true).HTML
+	in.Signature = sanitize.Email(in.Signature, func(string) string { return "" }, sanitize.KeepRemote).HTML
 	saved, err := s.store.SaveIdentity(r.Context(), sess.Mailbox, in)
 	if err != nil {
 		s.storeError(w, err)

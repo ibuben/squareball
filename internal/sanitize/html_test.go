@@ -10,7 +10,7 @@ func noCID(string) string { return "" }
 func TestScriptsAndHandlersRemoved(t *testing.T) {
 	in := `<p onclick="x()">Привет</p><script>alert(1)</script><a href="javascript:alert(1)">a</a>
 <iframe src="https://evil"></iframe><style>body{display:none}</style><form action="/x"><input></form>`
-	out := Email(in, noCID, false).HTML
+	out := Email(in, noCID, nil).HTML
 	for _, bad := range []string{"<script", "onclick", "javascript:", "<iframe", "<style", "<form", "<input", "alert"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("output contains %q:\n%s", bad, out)
@@ -23,7 +23,7 @@ func TestScriptsAndHandlersRemoved(t *testing.T) {
 
 func TestRemoteImagesBlocked(t *testing.T) {
 	in := `<img src="https://track.example/p.png"><img src="//cdn.example/x.png"><img src="data:image/png;base64,AAAA">`
-	r := Email(in, noCID, false)
+	r := Email(in, noCID, nil)
 	if r.BlockedImages != 2 {
 		t.Errorf("blocked = %d, want 2: %s", r.BlockedImages, r.HTML)
 	}
@@ -34,7 +34,7 @@ func TestRemoteImagesBlocked(t *testing.T) {
 	if !strings.Contains(r.HTML, `src="data:image/png`) {
 		t.Errorf("data image dropped: %s", r.HTML)
 	}
-	r = Email(in, noCID, true)
+	r = Email(in, noCID, KeepRemote)
 	if r.BlockedImages != 0 || !strings.Contains(r.HTML, `src="https://track.example/p.png"`) {
 		t.Errorf("allowRemote must keep images: %+v", r)
 	}
@@ -46,14 +46,14 @@ func TestCIDRewritten(t *testing.T) {
 			return "/api/v1/part?index=2"
 		}
 		return ""
-	}, false)
+	}, nil)
 	if !strings.Contains(r.HTML, `src="/api/v1/part?index=2"`) {
 		t.Errorf("cid not rewritten: %s", r.HTML)
 	}
 }
 
 func TestStylesFiltered(t *testing.T) {
-	r := Email(`<p style="color:red;background-image:url(https://x/y);position:fixed">x</p>`, noCID, false)
+	r := Email(`<p style="color:red;background-image:url(https://x/y);position:fixed">x</p>`, noCID, nil)
 	if !strings.Contains(r.HTML, "color: red") && !strings.Contains(r.HTML, "color:red") {
 		t.Errorf("safe style dropped: %s", r.HTML)
 	}
@@ -63,7 +63,7 @@ func TestStylesFiltered(t *testing.T) {
 }
 
 func TestLinksOpenSafely(t *testing.T) {
-	r := Email(`<a href="https://example.com">x</a>`, noCID, false)
+	r := Email(`<a href="https://example.com">x</a>`, noCID, nil)
 	if !strings.Contains(r.HTML, `target="_blank"`) || !strings.Contains(r.HTML, "noreferrer") {
 		t.Errorf("link attrs: %s", r.HTML)
 	}
@@ -83,7 +83,7 @@ func TestTextEscapedAndLinkified(t *testing.T) {
 }
 
 func TestQuoteMarkerKept(t *testing.T) {
-	out := Email(`<p>ok</p><div data-wm-quote="1"><blockquote type="cite">q</blockquote></div><div data-wm-quote="x" data-evil="1">z</div>`, noCID, false).HTML
+	out := Email(`<p>ok</p><div data-wm-quote="1"><blockquote type="cite">q</blockquote></div><div data-wm-quote="x" data-evil="1">z</div>`, noCID, nil).HTML
 	if !strings.Contains(out, `<div data-wm-quote="1">`) || !strings.Contains(out, `type="cite"`) {
 		t.Errorf("marker dropped: %s", out)
 	}

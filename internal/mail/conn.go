@@ -112,6 +112,13 @@ type Pool struct {
 	byID map[string]*entry
 }
 
+// Sessions — число сессий с открытым IMAP-соединением (для метрик).
+func (p *Pool) Sessions() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.byID)
+}
+
 type entry struct {
 	mu       sync.Mutex
 	c        *imapclient.Client

@@ -28,6 +28,7 @@ import (
 
 var (
 	reInlineToken = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
+	reProxySrc    = regexp.MustCompile(`(?i)(<img\b[^>]*?\ssrc\s*=\s*)(["'])(/api/v1/img\?[^"']*)(["'])`)
 	rePartSrc     = regexp.MustCompile(`(?i)(<img\b[^>]*?\ssrc\s*=\s*)(["'])(/api/v1/part\?[^"']*)(["'])`)
 )
 
@@ -82,6 +83,16 @@ func (s *Server) inlineImages(w http.ResponseWriter, r *http.Request, src string
 			byToken[token] = mail.Upload{Filename: fhs[0].Filename, ContentType: ct, Data: data, ContentID: token + suffix}
 		}
 	}
+
+	// Картинки цитаты, показанные через прокси, уходят с исходными адресами.
+	src = reProxySrc.ReplaceAllStringFunc(src, func(m string) string {
+		g := reProxySrc.FindStringSubmatch(m)
+		orig, ok := s.unproxyImageURL(html.UnescapeString(g[3]))
+		if !ok {
+			return m
+		}
+		return g[1] + g[2] + html.EscapeString(orig) + g[4]
+	})
 
 	// Ссылки на части писем из ящика → новые метки.
 	type ref struct {
@@ -146,7 +157,7 @@ func (s *Server) inlineImages(w http.ResponseWriter, r *http.Request, src string
 			return "cid:" + up.ContentID
 		}
 		return ""
-	}, true).HTML
+	}, sanitize.KeepRemote).HTML
 
 	var out []mail.Upload
 	var size int64

@@ -20,6 +20,7 @@ import (
 	"github.com/ibuben/squareball/ext"
 	"github.com/ibuben/squareball/internal/config"
 	"github.com/ibuben/squareball/internal/mail"
+	"github.com/ibuben/squareball/internal/netguard"
 	"github.com/ibuben/squareball/internal/session"
 	"github.com/ibuben/squareball/internal/spell"
 	"github.com/ibuben/squareball/internal/store"
@@ -56,6 +57,11 @@ type Server struct {
 	contactSource ext.ContactSource // внешние адресные книги (адаптер)
 	sessionSecret []byte            // для ключа шифрования паролей внешних книг
 	davLocks      davLocks
+
+	imgClient *http.Client // прокси картинок: только публичные адреса
+	imgSem    chan struct{}
+
+	metrics *metrics
 }
 
 type Options struct {
@@ -78,6 +84,9 @@ func New(o Options) (*Server, error) {
 		pwnedClient: &http.Client{Timeout: 5 * time.Second},
 
 		sessionSecret: o.SessionSecret,
+		imgClient:     netguard.Client(15*time.Second, false),
+		imgSem:        make(chan struct{}, proxyParallel),
+		metrics:       newMetrics(),
 	}
 	if s.store == nil {
 		return nil, errors.New("api: store is required")
@@ -109,7 +118,7 @@ func New(o Options) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) Handler() http.Handler { return s.securityHeaders(s.mux) }
+func (s *Server) Handler() http.Handler { return s.securityHeaders(s.metrics.instrument(s.mux)) }
 
 // --- ext.Core ---------------------------------------------------------------
 
@@ -350,7 +359,7 @@ func (s *Server) securityHeaders(h http.Handler) http.Handler {
 		if s.secure {
 			hd.Set("Strict-Transport-Security", "max-age=31536000")
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/v1/img" {
 			hd.Set("Cache-Control", "no-store")
 		}
 		h.ServeHTTP(w, r)

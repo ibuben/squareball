@@ -340,6 +340,11 @@ func (c *Config) Validate() error {
 	if c.Sieve.Enabled {
 		checkEndpoint("sieve", c.Sieve.Endpoint, "starttls", "none")
 	}
+	if c.Metrics.Listen != "" {
+		if _, _, err := net.SplitHostPort(c.Metrics.Listen); err != nil {
+			add("metrics.listen: must be host:port (e.g. 127.0.0.1:9180)")
+		}
+	}
 	switch c.Spellcheck.Engine {
 	case "browser", "off":
 	case "hunspell":

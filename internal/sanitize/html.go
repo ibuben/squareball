@@ -41,14 +41,20 @@ var policy = func() *bluemonday.Policy {
 	return p
 }()
 
+// KeepRemote оставляет адреса внешних картинок как есть (подписи и шаблоны:
+// получателю нужны настоящие адреса).
+func KeepRemote(u string) string { return u }
+
 type Result struct {
 	HTML          string `json:"html"`
 	BlockedImages int    `json:"blocked_images"`
 }
 
 // Email санитизирует HTML письма. cidURL переводит Content-ID в URL части
-// (пустая строка — картинку убрать). allowRemote разрешает внешние картинки.
-func Email(src string, cidURL func(cid string) string, allowRemote bool) Result {
+// (пустая строка — картинку убрать). remote решает судьбу внешних картинок:
+// nil — заблокировать (data-blocked-src), иначе — заменить адрес на то, что
+// вернёт функция (например, ссылку на прокси картинок).
+func Email(src string, cidURL func(cid string) string, remote func(u string) string) Result {
 	clean := policy.Sanitize(src)
 	doc, err := html.Parse(strings.NewReader(clean))
 	if err != nil {
@@ -69,9 +75,15 @@ func Email(src string, cidURL func(cid string) string, allowRemote bool) Result 
 					n.Attr[i].Val = cidURL(strings.Trim(v[4:], "<>"))
 				case strings.HasPrefix(lower, "data:image/"):
 				case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"), strings.HasPrefix(lower, "//"):
-					if !allowRemote {
+					if strings.HasPrefix(v, "//") {
+						v = "https:" + v
+					}
+					if remote == nil {
 						n.Attr[i].Key = "data-blocked-src"
+						n.Attr[i].Val = v
 						blocked++
+					} else {
+						n.Attr[i].Val = remote(v)
 					}
 				default:
 					n.Attr[i].Val = ""

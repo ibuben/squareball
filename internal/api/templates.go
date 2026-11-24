@@ -44,7 +44,7 @@ func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "template.too_large", "")
 		return
 	}
-	in.HTML = sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML
+	in.HTML = sanitize.Email(in.HTML, func(string) string { return "" }, sanitize.KeepRemote).HTML
 	saved, err := s.store.SaveTemplate(r.Context(), sessionFrom(r.Context()).Mailbox, in)
 	if err != nil {
 		if err == store.ErrTooMany {

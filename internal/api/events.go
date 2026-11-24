@@ -36,6 +36,16 @@ func (sc *streamCounter) acquire(id string) bool {
 	return true
 }
 
+func (sc *streamCounter) total() int {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	n := 0
+	for _, v := range sc.n {
+		n += v
+	}
+	return n
+}
+
 func (sc *streamCounter) release(id string) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()

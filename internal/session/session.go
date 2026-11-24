@@ -237,3 +237,10 @@ func (m *Manager) Alive(id string) bool {
 	m.mu.Unlock()
 	return ok && !m.expired(s, time.Now())
 }
+
+// Count — число живых сессий (для метрик).
+func (m *Manager) Count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sessions)
+}

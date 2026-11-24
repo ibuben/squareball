@@ -47,6 +47,7 @@ func (s *Server) routes(static http.Handler) {
 	s.mboxRoutes()
 	s.spellRoutes()
 	s.bookRoutes()
+	m.HandleFunc("GET /api/v1/img", s.authed(s.handleImageProxy))
 	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
 	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
 	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))
@@ -278,7 +279,11 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	var body sanitize.Result
 	if m.HTML != "" {
-		body = sanitize.Email(m.HTML, partURL, allowRemote)
+		var remote func(string) string
+		if allowRemote {
+			remote = s.proxyImageURL
+		}
+		body = sanitize.Email(m.HTML, partURL, remote)
 	} else {
 		body = sanitize.Result{HTML: sanitize.Text(m.Text)}
 	}
