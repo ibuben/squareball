@@ -270,7 +270,8 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return ""
 		}
-		return fmt.Sprintf("/api/v1/part?folder=%s&uid=%d&index=%d", url.QueryEscape(folder), uid, i)
+		// Относительная ссылка — как у прокси картинок (см. proxyImageURL).
+		return fmt.Sprintf("api/v1/part?folder=%s&uid=%d&index=%d", url.QueryEscape(folder), uid, i)
 	}
 	var body sanitize.Result
 	if m.HTML != "" {

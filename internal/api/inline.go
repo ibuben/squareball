@@ -22,14 +22,15 @@ import (
 // Картинки в тексте письма приходят двумя путями:
 //   - новые — файлами формы "inline:<метка>", в HTML на них ссылается src="cid:<метка>";
 //   - уже лежащие в почте (цитата письма, продолжаемый черновик) — ссылками
-//     src="/api/v1/part?folder=…&uid=…&index=…": их забираем из ящика.
+//     src="api/v1/part?folder=…&uid=…&index=…" (относительной, от корня или
+//     полным адресом — как её сохранил редактор): их забираем из ящика.
 // Все они становятся частями multipart/related с уникальными Content-ID,
 // а картинки, которых в итоговом HTML нет, в письмо не попадают.
 
 var (
 	reInlineToken = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
-	reProxySrc    = regexp.MustCompile(`(?i)(<img\b[^>]*?\ssrc\s*=\s*)(["'])(/api/v1/img\?[^"']*)(["'])`)
-	rePartSrc     = regexp.MustCompile(`(?i)(<img\b[^>]*?\ssrc\s*=\s*)(["'])(/api/v1/part\?[^"']*)(["'])`)
+	reProxySrc    = regexp.MustCompile(`(?i)(<img\b[^>]*?\ssrc\s*=\s*)(["'])((?:[^"'\s]*/)?api/v1/img\?[^"']*)(["'])`)
+	rePartSrc     = regexp.MustCompile(`(?i)(<img\b[^>]*?\ssrc\s*=\s*)(["'])((?:[^"'\s]*/)?api/v1/part\?[^"']*)(["'])`)
 )
 
 // maxInlineImages — защита от письма из тысячи картинок.

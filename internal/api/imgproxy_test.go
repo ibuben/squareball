@@ -32,7 +32,7 @@ func TestImageProxy(t *testing.T) {
 	s := newServer(t, testConfig(t))
 	get := func(link string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		s.handleImageProxy(rec, httptest.NewRequest("GET", link, nil))
+		s.handleImageProxy(rec, httptest.NewRequest("GET", "/"+link, nil))
 		return rec
 	}
 
@@ -60,12 +60,20 @@ func TestImageProxy(t *testing.T) {
 	// Санитайзер переписывает внешние картинки на прокси, ответ — обратно.
 	html := sanitize.Email(`<p><img src="https://track.example/p.gif?id=1&amp;x=2"><img src="//cdn.example/l.png"></p>`,
 		func(string) string { return "" }, s.proxyImageURL).HTML
-	if strings.Contains(html, `src="https://`) || strings.Count(html, `src="/api/v1/img?u=`) != 2 {
+	if strings.Contains(html, `src="https://`) || strings.Count(html, `src="api/v1/img?u=`) != 2 {
 		t.Fatalf("not proxied: %s", html)
 	}
 	link := s.proxyImageURL("https://track.example/p.gif?id=1&x=2")
 	if orig, ok := s.unproxyImageURL(link); !ok || orig != "https://track.example/p.gif?id=1&x=2" {
 		t.Fatalf("unproxy: %q %v", orig, ok)
+	}
+	for _, l := range []string{"/" + link, "/webmail/" + link, "https://mail.example/webmail/" + link} {
+		if orig, ok := s.unproxyImageURL(l); !ok || orig != "https://track.example/p.gif?id=1&x=2" {
+			t.Errorf("unproxy %q: %q %v", l, orig, ok)
+		}
+	}
+	if _, ok := s.unproxyImageURL("/x" + link); ok {
+		t.Error("xapi/v1/img accepted")
 	}
 	if _, ok := s.unproxyImageURL(strings.Replace(link, "id%3D1", "id%3D2", 1)); ok {
 		t.Fatal("tampered link accepted")

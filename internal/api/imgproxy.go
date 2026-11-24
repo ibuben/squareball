@@ -37,18 +37,26 @@ func (s *Server) imgSig(u string) string {
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil)[:18])
 }
 
-// proxyImageURL — ссылка на картинку через прокси.
+// proxyImageURL — ссылка на картинку через прокси. Относительная: webmail
+// может работать под префиксом (/webmail/ в панели), и браузер достроит адрес
+// от страницы — письмо показывается в iframe srcdoc с базой родителя.
 func (s *Server) proxyImageURL(u string) string {
-	return "/api/v1/img?u=" + url.QueryEscape(u) + "&s=" + s.imgSig(u)
+	return proxyPath + url.QueryEscape(u) + "&s=" + s.imgSig(u)
 }
+
+const proxyPath = "api/v1/img?u="
 
 // unproxyImageURL возвращает исходный адрес из ссылки прокси (для ответа
 // с цитатой: получателю нужны настоящие адреса). ok=false — не ссылка прокси.
+// Принимает и относительную ссылку, и с любым путём или адресом перед
+// api/v1/img (редактор мог её достроить, старые черновики — от корня).
 func (s *Server) unproxyImageURL(link string) (string, bool) {
-	if !strings.HasPrefix(link, "/api/v1/img?") {
+	const marker = "api/v1/img?"
+	i := strings.Index(link, marker)
+	if i < 0 || (i > 0 && link[i-1] != '/') {
 		return "", false
 	}
-	q, err := url.ParseQuery(link[len("/api/v1/img?"):])
+	q, err := url.ParseQuery(link[i+len(marker):])
 	if err != nil {
 		return "", false
 	}
