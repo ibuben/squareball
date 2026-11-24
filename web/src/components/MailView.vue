@@ -13,7 +13,7 @@ import MessageList from './MessageList.vue'
 import ReadingPane from './ReadingPane.vue'
 import ContactPane from './ContactPane.vue'
 import {
-  applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, openCompose, openFolder, openMessage, setMe, state,
+  applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, openCompose, openFolder, openMessage, setMe, state,
 } from '../store'
 
 const reading = ref<InstanceType<typeof ReadingPane>>()
@@ -114,6 +114,7 @@ onMounted(async () => {
   await loadFolders()
   await openFolder(state.folders.find((f) => f.role === 'inbox')?.name ?? 'INBOX')
   void loadIdentities()
+  void loadPrefs()
   connectEvents()
   lastPoll = Date.now()
   timer = window.setInterval(() => {

@@ -17,7 +17,7 @@ export interface Folder {
 export interface Summary {
   uid: number; from: Address[]; to: Address[]; subject: string; date: string; size: number
   seen: boolean; flagged: boolean; answered: boolean; forwarded: boolean; draft: boolean
-  has_attachments: boolean
+  has_attachments: boolean; priority?: 1 | 5
 }
 export interface Page { total: number; offset: number; messages: Summary[] }
 export interface Attachment {
@@ -28,6 +28,7 @@ export interface Message {
   uid: number; folder: string; message_id?: string; in_reply_to?: string; references?: string[]
   from: Address[]; to: Address[]; cc?: Address[]; bcc?: Address[]; reply_to?: Address[]
   subject: string; date: string; attachments: Attachment[]; flags: string[]; list_unsubscribe?: string
+  priority?: 1 | 5; mdn_to?: string; dsn?: boolean
 }
 export interface MessageView { message: Message; body_html: string; body_text: string; blocked_images: number }
 
@@ -54,7 +55,7 @@ export interface Group { id: number; name: string; count: number }
 export interface Collected { email: string; name: string; uses: number; last_used: string }
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
-export interface Prefs { archive_structure: '' | 'year' | 'month' }
+export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never' }
 
 export interface PasswordPolicy {
   min_length: number; max_length: number; require_classes: number
@@ -126,6 +127,8 @@ export const api = {
     request<{ ok: boolean; moved: number }>('POST', '/api/v1/messages/archive', { folder, uids }),
   prefs: () => request<{ prefs: Prefs }>('GET', '/api/v1/prefs'),
   setPrefs: (p: Partial<Prefs>) => request<{ prefs: Prefs }>('PUT', '/api/v1/prefs', p),
+  mdn: (folder: string, uid: number, send: boolean, auto = false) =>
+    request<{ ok: boolean; sent: boolean }>('POST', '/api/v1/messages/mdn', { folder, uid, send, auto }),
   zipURL: (folder: string, uid: number, name: string) => `/api/v1/attachments.zip?${q_({ folder, uid, name })}`,
   move: (folder: string, uids: number[], dest: string) =>
     request('POST', '/api/v1/messages/move', { folder, uids, dest }),

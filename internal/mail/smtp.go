@@ -23,7 +23,9 @@ type SendError struct {
 func (e *SendError) Error() string { return fmt.Sprintf("smtp %d: %s", e.Code, e.Message) }
 
 // Send отправляет письмо через SMTP submission от имени пользователя.
-func Send(cfg *config.SMTP, cr Creds, from string, rcpts []string, raw []byte) error {
+// dsn — запросить уведомление о доставке (NOTIFY=SUCCESS,FAILURE), если сервер
+// поддерживает расширение DSN; иначе параметр молча не передаётся.
+func Send(cfg *config.SMTP, cr Creds, from string, rcpts []string, raw []byte, dsn bool) error {
 	tc, err := tlsConfig(cfg.Host, cfg.TLSVerify, "")
 	if err != nil {
 		return err
@@ -62,8 +64,12 @@ func Send(cfg *config.SMTP, cr Creds, from string, rcpts []string, raw []byte) e
 	if err := c.Mail(from, nil); err != nil {
 		return asSendError(err)
 	}
+	var ro *smtp.RcptOptions
+	if dsn {
+		ro = &smtp.RcptOptions{Notify: []smtp.DSNNotify{smtp.DSNNotifySuccess, smtp.DSNNotifyFailure}}
+	}
 	for _, r := range rcpts {
-		if err := c.Rcpt(r, nil); err != nil {
+		if err := c.Rcpt(r, ro); err != nil {
 			return asSendError(err)
 		}
 	}

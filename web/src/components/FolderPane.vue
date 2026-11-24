@@ -15,8 +15,18 @@ const icons: Record<string, unknown> = {
   inbox: Inbox, drafts: FileText, sent: Send, archive: Archive, junk: ShieldAlert, trash: Trash2,
 }
 const visible = computed(visibleFolders)
-const special = computed(() => visible.value.filter((f) => f.role))
-const others = computed(() => visible.value.filter((f) => !f.role))
+// Подпапки спецпапки (Архив/2025) показываются сразу под ней, а не среди обычных.
+const underRole = (f: Folder) => state.folders.some((r) => r.role && r.delimiter && f.name.startsWith(r.name + r.delimiter))
+const special = computed(() => {
+  const roles = visible.value.filter((f) => f.role)
+  const out: Folder[] = []
+  for (const r of roles) {
+    out.push(r)
+    if (r.delimiter) out.push(...visible.value.filter((f) => !f.role && f.name.startsWith(r.name + r.delimiter)))
+  }
+  return out
+})
+const others = computed(() => visible.value.filter((f) => !f.role && !underRole(f)))
 const dropTarget = ref('')
 
 function onDrop(e: DragEvent, name: string) {

@@ -39,6 +39,7 @@ type Summary struct {
 	Forwarded      bool      `json:"forwarded"`
 	Draft          bool      `json:"draft"`
 	HasAttachments bool      `json:"has_attachments"`
+	Priority       int       `json:"priority,omitempty"` // 1 — высокая, 5 — низкая
 }
 
 type Page struct {
@@ -149,6 +150,7 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 	bufs, err := c.Fetch(imap.UIDSetNum(window...), &imap.FetchOptions{
 		UID: true, Flags: true, Envelope: true, RFC822Size: true, InternalDate: true,
 		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+		BodySection:   []*imap.FetchItemBodySection{prioritySection},
 	}).Collect()
 	if err != nil {
 		return nil, err
@@ -167,6 +169,7 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 			Seen: hasFlag(b.Flags, imap.FlagSeen), Flagged: hasFlag(b.Flags, imap.FlagFlagged),
 			Answered: hasFlag(b.Flags, imap.FlagAnswered), Forwarded: hasFlag(b.Flags, imap.FlagForwarded),
 			Draft: hasFlag(b.Flags, imap.FlagDraft), HasAttachments: hasAttachments(b.BodyStructure),
+			Priority: priorityFromHeader(b.FindBodySection(prioritySection)),
 		}
 		if e := b.Envelope; e != nil {
 			s.Subject = e.Subject
@@ -209,6 +212,10 @@ type Message struct {
 	Attachments []Attachment `json:"attachments"`
 	Flags       []string     `json:"flags"`
 	ListUnsub   string       `json:"list_unsubscribe,omitempty"`
+	Priority    int          `json:"priority,omitempty"`
+	MDNTo       string       `json:"mdn_to,omitempty"` // Disposition-Notification-To
+	ReturnPath  string       `json:"-"`
+	DSN         bool         `json:"dsn,omitempty"` // только у черновиков
 }
 
 func fetchRaw(c *imapclient.Client, folder string, uid imap.UID) ([]byte, []imap.Flag, error) {
@@ -342,6 +349,12 @@ func GetMessage(c *imapclient.Client, folder string, uid uint32, markSeen bool) 
 		m.Cc = mailAddrs(hdr, "Cc")
 		m.ReplyTo = mailAddrs(hdr, "Reply-To")
 		m.ListUnsub = hdr.Get("List-Unsubscribe")
+		m.Priority = ParsePriority(hdr.Get("X-Priority"), hdr.Get("Importance"))
+		if dnt := mailAddrs(hdr, "Disposition-Notification-To"); len(dnt) > 0 {
+			m.MDNTo = dnt[0].Email
+		}
+		m.ReturnPath = strings.Trim(strings.TrimSpace(hdr.Get("Return-Path")), "<>")
+		m.DSN = hdr.Get("X-Webmail-DSN") == "1"
 	}
 	if markSeen && !hasFlag(flags, imap.FlagSeen) {
 		err := c.Store(imap.UIDSetNum(imap.UID(uid)), &imap.StoreFlags{

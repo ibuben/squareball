@@ -128,18 +128,42 @@ func ListFolders(c *imapclient.Client, detect string, fallback map[string]string
 			}
 		}
 	}
-	sort.SliceStable(folders, func(i, j int) bool {
-		ri, iok := roleOrder[folders[i].Role]
-		rj, jok := roleOrder[folders[j].Role]
-		switch {
-		case iok && jok:
-			return ri < rj
-		case iok != jok:
-			return iok
-		}
-		return strings.ToLower(folders[i].Name) < strings.ToLower(folders[j].Name)
-	})
+	sortFolders(folders)
 	return folders, nil
+}
+
+// sortFolders: спецпапки в порядке roleOrder, каждая — со своими подпапками
+// (Архив, Архив/2024, Архив/2025), затем остальные по алфавиту.
+func sortFolders(folders []Folder) {
+	rank := make(map[string]int, len(folders))
+	for _, f := range folders {
+		rank[f.Name] = len(roleOrder)
+	}
+	for _, r := range folders {
+		ro, ok := roleOrder[r.Role]
+		if !ok {
+			continue
+		}
+		for _, f := range folders {
+			if f.Name == r.Name || (r.Delimiter != "" && strings.HasPrefix(f.Name, r.Name+r.Delimiter)) {
+				rank[f.Name] = ro
+			}
+		}
+	}
+	key := func(f Folder) string {
+		if f.Delimiter == "" {
+			return strings.ToLower(f.Name)
+		}
+		// Разделитель — самый «младший» символ: «A/B» раньше «A B».
+		return strings.ReplaceAll(strings.ToLower(f.Name), strings.ToLower(f.Delimiter), "\x00")
+	}
+	sort.SliceStable(folders, func(i, j int) bool {
+		ri, rj := rank[folders[i].Name], rank[folders[j].Name]
+		if ri != rj {
+			return ri < rj
+		}
+		return key(folders[i]) < key(folders[j])
+	})
 }
 
 func roleFromAttr(a imap.MailboxAttr) string {

@@ -15,6 +15,9 @@ import (
 // prefValues — допустимые настройки ящика и их значения ("" — по умолчанию).
 var prefValues = map[string][]string{
 	"archive_structure": {mail.ArchiveFlat, mail.ArchiveYear, mail.ArchiveMonth},
+	// Запросы уведомления о прочтении: "" — спрашивать, always — отправлять
+	// (только если адрес совпадает с отправителем), never — не отвечать.
+	"mdn_mode": {"", "always", "never"},
 }
 
 func (s *Server) prefRoutes() {
@@ -23,6 +26,7 @@ func (s *Server) prefRoutes() {
 	m.HandleFunc("PUT /api/v1/prefs", s.authed(s.handlePutPrefs))
 	m.HandleFunc("POST /api/v1/messages/archive", s.authed(s.handleArchive))
 	m.HandleFunc("GET /api/v1/attachments.zip", s.authed(s.handleAttachmentsZip))
+	m.HandleFunc("POST /api/v1/messages/mdn", s.authed(s.handleMDN))
 }
 
 func (s *Server) prefs(r *http.Request) map[string]string {

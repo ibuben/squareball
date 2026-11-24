@@ -1,6 +1,9 @@
 package mail
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCheckFolderName(t *testing.T) {
 	for _, ok := range []string{"Проекты", "2024 отчёты", "a.b"} {
@@ -49,5 +52,22 @@ func TestZipNames(t *testing.T) {
 	}
 	if a, b := uniqueName("x.pdf", used), uniqueName("X.pdf", used); a != "x.pdf" || b != "X (2).pdf" {
 		t.Errorf("unique: %q %q", a, b)
+	}
+}
+
+func TestSortFolders(t *testing.T) {
+	fs := []Folder{
+		{Name: "Work", Delimiter: "/"}, {Name: "Archive/2025", Delimiter: "/"}, {Name: "Trash", Role: RoleTrash, Delimiter: "/"},
+		{Name: "Archive", Role: RoleArchive, Delimiter: "/"}, {Name: "INBOX", Role: RoleInbox, Delimiter: "/"},
+		{Name: "Work B", Delimiter: "/"}, {Name: "Work/A", Delimiter: "/"}, {Name: "Archive/2024", Delimiter: "/"},
+	}
+	sortFolders(fs)
+	var got []string
+	for _, f := range fs {
+		got = append(got, f.Name)
+	}
+	want := "INBOX Archive Archive/2024 Archive/2025 Trash Work Work/A Work B"
+	if strings.Join(got, " ") != want {
+		t.Errorf("order: %v", got)
 	}
 }

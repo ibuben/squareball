@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import {
-  Archive, ArrowLeft, Code, Download, FileArchive, Flag, Forward, ImageOff, MailOpen, Paperclip, Pencil, Reply, ReplyAll, ShieldAlert, Trash2,
+  Archive, ArrowDown, ArrowLeft, BellRing, Code, Download, FileArchive, Flag, Forward, ImageOff, MailOpen, Paperclip, Pencil,
+  Printer, Reply, ReplyAll, ShieldAlert, Trash2,
 } from 'lucide-vue-next'
-import { api, type Address } from '../api'
+import { api, ApiError, type Address } from '../api'
 import { escapeHTML, fullAddr, fullDate, replySubject, size, who, whoList } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  archiveSelected, currentFolder, deleteSelected, moveSelected, openCompose, openDraft, openMessage, roleFolder, setFlag, state,
+  archiveSelected, currentFolder, deleteSelected, moveSelected, openCompose, openDraft, openMessage, reportError, roleFolder,
+  setFlag, state, toast,
 } from '../store'
 
 defineEmits<{ back: [] }>()
@@ -91,6 +93,66 @@ function forward() {
 }
 
 const archive = () => void archiveSelected()
+
+// --- уведомление о прочтении --------------------------------------------------------
+// Спрашиваем, если отправитель просил уведомление, оно ещё не отправлено и письмо
+// не своё (не «Отправленные» и не «Черновики»). Настройка «всегда» отправляет сама,
+// но только если адрес совпадает с отправителем — иначе тоже спрашиваем.
+const mdnDone = ref(new Set<string>())
+const mdnKey = computed(() => (msg.value ? `${msg.value.folder}\u0000${msg.value.uid}` : ''))
+const mdnAsk = computed(() => {
+  const m = msg.value
+  if (!m?.mdn_to || m.flags.includes('$MDNSent') || mdnDone.value.has(mdnKey.value)) return false
+  const role = currentFolder()?.role
+  return role !== 'sent' && role !== 'drafts' && state.prefs.mdn_mode !== 'never'
+})
+async function mdn(send: boolean, auto = false) {
+  const m = msg.value
+  if (!m) return
+  const key = mdnKey.value
+  try {
+    await api.mdn(m.folder, m.uid, send, auto)
+    mdnDone.value = new Set(mdnDone.value).add(key)
+    if (send) toast(auto ? `Отправлено уведомление о прочтении для ${m.mdn_to}` : 'Уведомление о прочтении отправлено')
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'mdn.confirm') return // остаётся вопрос
+    if (e instanceof ApiError && e.code === 'mdn.not_requested') { mdnDone.value = new Set(mdnDone.value).add(key); return }
+    reportError(e)
+  }
+}
+watch(mdnKey, () => { if (mdnAsk.value && state.prefs.mdn_mode === 'always') void mdn(true, true) })
+
+// --- печать ----------------------------------------------------------------------
+// Отдельный невидимый iframe с заголовками и телом письма; печатается только он.
+function printMessage() {
+  const m = msg.value
+  if (!m || !state.current) return
+  const row = (k: string, v: string) => (v ? `<tr><th>${escapeHTML(k)}</th><td>${escapeHTML(v)}</td></tr>` : '')
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(m.subject)}</title>
+<style>
+  body{font:12pt/1.45 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#000;margin:0}
+  h1{font-size:15pt;margin:0 0 8pt} table.h{border-collapse:collapse;margin-bottom:10pt;font-size:10pt}
+  table.h th{text-align:left;padding:1pt 10pt 1pt 0;color:#555;font-weight:normal;vertical-align:top}
+  hr{border:0;border-top:1px solid #999;margin:0 0 12pt} img{max-width:100%;height:auto}
+  blockquote{margin:6pt 0;padding-left:10pt;border-left:2px solid #999}
+  @page{margin:16mm}
+</style></head><body>
+<h1>${escapeHTML(m.subject || t('list.nosubject'))}</h1>
+<table class="h">${row('От', whoList(m.from))}${row('Кому', whoList(m.to))}${row('Копия', whoList(m.cc ?? []))}${row('Дата', fullDate(m.date))}${row('Вложения', files.value.map((a) => a.filename).join(', '))}</table>
+<hr>${state.current.body_html}</body></html>`
+  const f = document.createElement('iframe')
+  f.setAttribute('sandbox', 'allow-same-origin allow-modals')
+  f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+  f.srcdoc = doc
+  f.onload = () => {
+    const done = () => setTimeout(() => f.remove(), 500)
+    f.contentWindow?.addEventListener('afterprint', done)
+    f.contentWindow?.focus()
+    f.contentWindow?.print()
+    setTimeout(done, 60_000)
+  }
+  document.body.appendChild(f)
+}
 const junk = () => { const j = roleFolder('junk'); if (j) void moveSelected(j.name) }
 
 defineExpose({ reply, forward })
@@ -119,11 +181,16 @@ defineExpose({ reply, forward })
         <button class="icon-btn" :class="{ active: summary?.flagged }" :title="t('read.flag')" :aria-label="t('read.flag')"
                 @click="setFlag([msg.uid], '\\Flagged', !summary?.flagged)"><Flag :size="17" /></button>
         <button class="icon-btn" :title="t('read.unread')" :aria-label="t('read.unread')" @click="setFlag([msg.uid], '\\Seen', false)"><MailOpen :size="17" /></button>
+        <button class="icon-btn" title="Печать" aria-label="Печать" data-test="print" @click="printMessage"><Printer :size="17" /></button>
         <a class="icon-btn" :title="t('read.source')" :aria-label="t('read.source')" :href="api.rawURL(msg.folder, msg.uid)"><Code :size="17" /></a>
       </div>
 
       <div class="scroll content">
-        <h1 class="subject">{{ msg.subject || t('list.nosubject') }}</h1>
+        <h1 class="subject">
+          <span v-if="msg.priority === 1" class="prio high" title="Высокая важность">!</span>
+          <ArrowDown v-else-if="msg.priority === 5" :size="16" class="prio low" aria-label="Низкая важность" />
+          {{ msg.subject || t('list.nosubject') }}
+        </h1>
         <div class="from">
           <Avatar :addr="msg.from[0]" :size="40" />
           <div class="who">
@@ -132,6 +199,12 @@ defineExpose({ reply, forward })
             <div v-if="msg.cc?.length" class="muted ellipsis">{{ t('read.cc') }}: {{ whoList(msg.cc) }}</div>
           </div>
           <span class="faint date">{{ fullDate(msg.date) }}</span>
+        </div>
+
+        <div v-if="mdnAsk" class="banner" data-test="mdn-banner">
+          <BellRing :size="16" /> <span>{{ msg.mdn_to }} просит уведомить о прочтении письма.</span>
+          <button class="btn" @click="mdn(true)">Отправить</button>
+          <button class="btn" @click="mdn(false)">Не отправлять</button>
         </div>
 
         <div v-if="state.current!.blocked_images" class="banner">
@@ -179,6 +252,11 @@ defineExpose({ reply, forward })
   border-radius: 8px; background: var(--pane-alt); border: 1px solid var(--border); color: var(--text-2);
 }
 .banner .btn { margin-left: auto; height: 26px; }
+.banner .btn + .btn { margin-left: 0; }
+.prio { display: inline-flex; vertical-align: 1px; margin-right: 4px; }
+.prio.high { color: #fff; background: var(--danger); border-radius: 4px; width: 18px; height: 18px; justify-content: center;
+  align-items: center; font-size: 13px; font-weight: 800; }
+.prio.low { color: var(--text-3); }
 .files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .file {
   display: inline-flex; align-items: center; gap: 8px; max-width: 280px; padding: 6px 10px;

@@ -456,6 +456,10 @@ type sendReq struct {
 	KeepAttachments []int `json:"keep_attachments"`
 	// Отправитель из /identities; 0 — по умолчанию.
 	IdentityID int64 `json:"identity_id"`
+	// Важность: 1 — высокая, 5 — низкая, 0 — обычная.
+	Priority    int  `json:"priority"`
+	ReadReceipt bool `json:"read_receipt"`
+	DSN         bool `json:"dsn"`
 }
 
 // readCompose разбирает multipart-форму письма (поле draft + файлы attachments)
@@ -476,7 +480,10 @@ func (s *Server) readCompose(w http.ResponseWriter, r *http.Request, forDraft bo
 	d := &mail.Draft{
 		From: mail.Address{Email: sess.Mailbox}, To: in.To, Cc: in.Cc, Bcc: in.Bcc,
 		Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo, References: in.References,
-		KeepBcc: forDraft,
+		KeepBcc: forDraft, ReadReceipt: in.ReadReceipt, DSN: in.DSN,
+	}
+	if in.Priority == 1 || in.Priority == 5 {
+		d.Priority = in.Priority
 	}
 	if in.HTML != "" {
 		d.HTML = sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML
@@ -559,7 +566,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "send.not_allowed", "")
 		return
 	}
-	if err := mail.Send(&s.cfg.SMTP, cr, d.From.Email, rcpts, raw); err != nil {
+	if err := mail.Send(&s.cfg.SMTP, cr, d.From.Email, rcpts, raw, d.DSN); err != nil {
 		s.mailError(w, r, err)
 		return
 	}

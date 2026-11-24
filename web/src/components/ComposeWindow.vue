@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronDown, ChevronUp, Maximize2, Minimize2, Minus, Paperclip, Send, Trash2, X } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Maximize2, Minimize2, Minus, Paperclip, Send, SlidersHorizontal, Trash2, X } from 'lucide-vue-next'
 import { api, ApiError, type Address, type Attachment, type MsgRef } from '../api'
 import { size } from '../format'
 import { t } from '../i18n'
@@ -41,6 +41,12 @@ function fitQuote() {
   if (f?.contentDocument?.documentElement) f.style.height = `${Math.min(f.contentDocument.documentElement.scrollHeight, 400)}px`
 }
 const sending = ref(false)
+// Параметры отправки: важность, уведомления о прочтении и доставке.
+const priority = ref<0 | 1 | 5>(props.init.priority ?? 0)
+const readReceipt = ref(props.init.readReceipt ?? false)
+const dsn = ref(props.init.dsn ?? false)
+const optionsOpen = ref(false)
+const optionsCount = computed(() => (priority.value ? 1 : 0) + (readReceipt.value ? 1 : 0) + (dsn.value ? 1 : 0))
 const minimized = ref(false)
 const maximized = ref(false)
 const dragging = ref(false)
@@ -101,6 +107,7 @@ function buildForm(): FormData {
     references: props.init.references ?? [], source: props.init.source ?? null,
     draft_ref: draftRef.value ?? null, keep_attachments: existing.value.map((a) => a.index),
     identity_id: identityId.value ?? 0,
+    priority: priority.value, read_receipt: readReceipt.value, dsn: dsn.value,
   }))
   for (const f of files.value) form.append('attachments', f, f.name)
   return form
@@ -246,6 +253,23 @@ async function discard() {
       </div>
       <footer>
         <button class="btn primary" :disabled="sending" @click="send"><Send :size="15" /> {{ t('compose.send') }}</button>
+        <span class="opts-wrap">
+          <button type="button" class="icon-btn" :class="{ active: optionsCount }" title="Параметры отправки"
+                  aria-label="Параметры отправки" data-test="compose-options" @click="optionsOpen = !optionsOpen">
+            <SlidersHorizontal :size="16" /><span v-if="optionsCount" class="badge">{{ optionsCount }}</span>
+          </button>
+          <div v-if="optionsOpen" class="opts" role="group" aria-label="Параметры отправки">
+            <label>Важность
+              <select v-model.number="priority" class="input" data-test="compose-priority" @change="touch">
+                <option :value="0">Обычная</option>
+                <option :value="1">Высокая</option>
+                <option :value="5">Низкая</option>
+              </select>
+            </label>
+            <label class="check"><input v-model="readReceipt" type="checkbox" data-test="compose-mdn" @change="touch" /> Запросить уведомление о прочтении</label>
+            <label class="check"><input v-model="dsn" type="checkbox" @change="touch" /> Запросить уведомление о доставке</label>
+          </div>
+        </span>
         <label class="icon-btn" :title="t('compose.attach')">
           <Paperclip :size="17" />
           <input type="file" multiple hidden @change="addFiles(($event.target as HTMLInputElement).files)" />
@@ -290,4 +314,12 @@ footer { display: flex; align-items: center; gap: 8px; padding: 10px 12px; borde
 @media (max-width: 760px) {
   .compose, .compose.max { inset: 0 !important; width: auto; height: auto; border-radius: 0; }
 }
+.opts-wrap { position: relative; display: inline-flex; }
+.opts-wrap .active { color: var(--accent); }
+.badge { position: absolute; top: 0; right: 0; min-width: 14px; height: 14px; border-radius: 7px; background: var(--accent);
+  color: #fff; font-size: 10px; line-height: 14px; text-align: center; }
+.opts { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; display: grid; gap: 10px; width: 290px; padding: 12px;
+  background: var(--pane); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+.opts label { display: grid; gap: 4px; color: var(--text-2); font-size: 13px; }
+.opts label.check { display: flex; align-items: center; gap: 8px; color: var(--text); }
 </style>

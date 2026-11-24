@@ -31,6 +31,9 @@ type Draft struct {
 	Attachments []Upload
 	Hostname    string // для Message-ID
 	KeepBcc     bool   // писать Bcc в заголовки — только для черновиков
+	Priority    int    // 1 — высокая, 5 — низкая, 0 — обычная
+	ReadReceipt bool   // Disposition-Notification-To: адрес отправителя
+	DSN         bool   // уведомление о доставке (SMTP NOTIFY); в заголовки не пишется, но хранится в черновике
 }
 
 // Recipients — адреса конверта (To + Cc + Bcc) без повторов.
@@ -106,6 +109,20 @@ func Build(d *Draft) ([]byte, string, error) {
 		h.SetMsgIDList("In-Reply-To", []string{d.InReplyTo})
 		refs := append(append([]string{}, d.References...), d.InReplyTo)
 		h.SetMsgIDList("References", refs)
+	}
+	switch d.Priority {
+	case 1:
+		h.Set("X-Priority", "1 (Highest)")
+		h.Set("Importance", "high")
+	case 5:
+		h.Set("X-Priority", "5 (Lowest)")
+		h.Set("Importance", "low")
+	}
+	if d.ReadReceipt {
+		h.SetAddressList("Disposition-Notification-To", toMail([]Address{d.From}))
+	}
+	if d.DSN && d.KeepBcc { // только черновик: чтобы галочка сохранилась при продолжении
+		h.Set("X-Webmail-DSN", "1")
 	}
 	h.Set("User-Agent", "webmail")
 	h.Set("MIME-Version", "1.0")

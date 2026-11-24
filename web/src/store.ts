@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import {
   api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Identity, type Me, type MessageView, type MsgRef,
-  type Summary,
+  type Prefs, type Summary,
 } from './api'
 import { t } from './i18n'
 
@@ -15,6 +15,7 @@ export interface ComposeInit {
   draftRef?: MsgRef
   existing?: Attachment[]
   identityId?: number
+  priority?: 0 | 1 | 5; readReceipt?: boolean; dsn?: boolean
 }
 
 interface Toast { id: number; text: string; action?: { label: string; run: () => void } }
@@ -40,6 +41,7 @@ export const state = reactive({
   view: 'mail' as 'mail' | 'settings' | 'contacts',
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
+  prefs: { archive_structure: '', mdn_mode: '' } as Prefs,
 })
 
 export async function loadIdentities() {
@@ -47,6 +49,17 @@ export async function loadIdentities() {
     const r = await api.identities()
     state.identities = r.identities
     state.identityLevel = r.level
+  } catch (e) { reportError(e) }
+}
+
+export async function loadPrefs() {
+  try { state.prefs = (await api.prefs()).prefs } catch (e) { reportError(e) }
+}
+
+export async function savePrefs(p: Partial<Prefs>) {
+  try {
+    state.prefs = (await api.setPrefs(p)).prefs
+    toast('Сохранено')
   } catch (e) { reportError(e) }
 }
 
@@ -324,6 +337,7 @@ export async function openDraft(uid: number) {
       inReplyTo: m.in_reply_to, references: m.references,
       draftRef: { folder: m.folder, uid: m.uid },
       existing: m.attachments.filter((a) => !a.inline || !a.content_id),
+      priority: m.priority ?? 0, readReceipt: !!m.mdn_to, dsn: !!m.dsn,
     })
   } catch (e) { reportError(e) }
 }

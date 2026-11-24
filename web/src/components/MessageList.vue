@@ -97,6 +97,7 @@ function onSearch() {
               <span class="date faint">{{ listDate(m.date) }}</span>
             </div>
             <div class="row2">
+              <span v-if="m.priority === 1" class="prio" title="Высокая важность">!</span>
               <span class="subject ellipsis">{{ m.subject || t('list.nosubject') }}</span>
               <Flag v-if="m.flagged" :size="13" class="flag" />
             </div>
@@ -138,6 +139,7 @@ h2 { margin: 0; font-size: 17px; }
 .row1, .row2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .from { flex: 1; }
 .subject { flex: 1; color: var(--text-2); }
+.prio { flex: none; color: var(--danger); font-weight: 800; margin-right: 4px; }
 .item.unread .from, .item.unread .subject { font-weight: 700; color: var(--text); }
 .item.unread::before {
   content: ''; position: absolute; left: 4px; top: 50%; width: 6px; height: 6px; margin-top: -3px;

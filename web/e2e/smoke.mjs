@@ -374,7 +374,13 @@ try {
   const ym = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`
   const monthFolder = pane.locator(`.folder[data-folder$="/${ym}"]`)
   await monthFolder.waitFor()
-  await monthFolder.click({ button: 'right' })
+  // Год и месяц — внутри «Архива», сразу под ним.
+  const order = await pane.locator('.folder').evaluateAll((els) => els.map((e) => e.dataset.folder))
+  const ai = order.findIndex((n) => n?.endsWith(`/${ym}`))
+  if (!order[ai - 1]?.endsWith(`/${now.getFullYear()}`)) throw new Error(`порядок папок: ${order.join(', ')}`)
+  const yearFolder = pane.locator(`.folder[data-folder="${order[ai - 1]}"]`)
+  await shot('16-archive-tree')
+  await yearFolder.click({ button: 'right' })
   page.once('dialog', (d) => d.accept())
   await page.locator('[data-test=folder-menu]').getByRole('menuitem', { name: 'Удалить папку' }).click()
   await monthFolder.waitFor({ state: 'detached' })
@@ -386,6 +392,39 @@ try {
   ])
   await page.getByRole('button', { name: 'Почта' }).first().click()
   step('«В архив» разложил письмо в папку по месяцу')
+
+  // Важность и уведомление о прочтении: письмо самому себе.
+  const mdnSubject = `Важное e2e ${stamp}`
+  await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+  const mdlg = page.getByRole('dialog').last()
+  await mdlg.locator('.chips input').first().fill('bob@test.local')
+  await mdlg.locator('.field input').last().fill(mdnSubject)
+  await mdlg.locator('.ProseMirror').click()
+  await page.keyboard.type('Прошу подтвердить прочтение.')
+  await mdlg.locator('[data-test=compose-options]').click()
+  await mdlg.locator('[data-test=compose-priority]').selectOption('1')
+  await mdlg.locator('[data-test=compose-mdn]').check()
+  await shot('14-compose-options')
+  await mdlg.getByRole('button', { name: 'Отправить' }).click()
+  await page.getByText('Письмо отправлено').last().waitFor()
+  const mdnItem = page.locator('.item', { hasText: mdnSubject })
+  await mdnItem.waitFor({ timeout: 10000 })
+  if (!(await mdnItem.locator('.prio').count())) throw new Error('нет отметки важности в списке')
+  await mdnItem.click()
+  await page.locator('[data-test=mdn-banner]').waitFor()
+  await page.locator('section.reading .prio.high').waitFor()
+  await shot('15-mdn-banner')
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/v1/messages/mdn') && r.ok()),
+    page.locator('[data-test=mdn-banner]').getByRole('button', { name: 'Отправить' }).click(),
+  ])
+  await page.locator('[data-test=mdn-banner]').waitFor({ state: 'detached' })
+  await page.locator('.item', { hasText: `Прочитано: ${mdnSubject}` }).waitFor({ timeout: 10000 })
+  step('важность видна, уведомление о прочтении отправлено и пришло')
+
+  await page.locator('[data-test=print]').click()
+  await page.locator('iframe[sandbox="allow-same-origin allow-modals"]').waitFor({ state: 'attached' })
+  step('печать: готовится отдельный документ письма')
 
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),

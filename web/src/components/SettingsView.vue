@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
-import { applyTheme, state } from '../store'
+import { BookOpen, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
+import { applyTheme, loadPrefs, savePrefs, state } from '../store'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
 import VacationSettings from './settings/VacationSettings.vue'
 import PasswordSettings from './settings/PasswordSettings.vue'
 import FoldersSettings from './settings/FoldersSettings.vue'
 
-type Section = 'identities' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
+type Section = 'identities' | 'reading' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
 const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean }[] = [
   { id: 'identities', label: 'Отправители и подписи', icon: UserRound },
+  { id: 'reading', label: 'Чтение писем', icon: BookOpen },
   { id: 'folders', label: 'Папки', icon: FolderTree },
   { id: 'filters', label: 'Фильтры', icon: Filter, sieve: true },
   { id: 'vacation', label: 'Автоответ', icon: Palmtree, sieve: true },
@@ -23,6 +24,12 @@ function open(s: Section) {
   current.value = s
   try { sessionStorage.setItem('wm.settings', s) } catch { /* ignore */ }
 }
+const mdnModes = [
+  { v: '' as const, label: 'Спрашивать' },
+  { v: 'always' as const, label: 'Отправлять, если адрес совпадает с адресом отправителя (иначе спрашивать)' },
+  { v: 'never' as const, label: 'Никогда не отправлять и не спрашивать' },
+]
+void loadPrefs()
 function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyTheme() }
 </script>
 
@@ -37,6 +44,16 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
     </nav>
     <div class="content scroll">
       <IdentitiesSettings v-if="current === 'identities'" />
+      <section v-else-if="current === 'reading'">
+        <h2>Чтение писем</h2>
+        <div class="card">
+          <p class="faint" style="margin:0">Что делать, если отправитель просит уведомить о прочтении письма:</p>
+          <label v-for="o in mdnModes" :key="o.v" class="check">
+            <input type="radio" name="mdn" :value="o.v" :checked="state.prefs.mdn_mode === o.v" data-test="mdn-mode"
+                   @change="savePrefs({ mdn_mode: o.v })" /> {{ o.label }}
+          </label>
+        </div>
+      </section>
       <FoldersSettings v-else-if="current === 'folders'" />
       <FiltersSettings v-else-if="current === 'filters'" />
       <VacationSettings v-else-if="current === 'vacation'" kind="vacation" />

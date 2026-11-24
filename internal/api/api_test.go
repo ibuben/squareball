@@ -717,3 +717,65 @@ func TestIntegrationArchiveAndZip(t *testing.T) {
 		t.Errorf("cleanup: %d %v", st, b)
 	}
 }
+
+func TestIntegrationPriorityAndMDN(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	s := newServer(t, testConfig(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+	subj := "IT-mdn " + strconv.FormatInt(time.Now().UnixNano(), 10)
+	draft, _ := json.Marshal(map[string]any{"to": []map[string]string{{"email": "bob@test.local"}}, "subject": subj,
+		"text": "x", "priority": 1, "read_receipt": true, "dsn": true})
+	if st, b := c.multipart("/api/v1/send", string(draft), nil); st != 200 {
+		t.Fatalf("send: %d %v", st, b)
+	}
+	var uid float64
+	for i := 0; i < 50 && uid == 0; i++ {
+		_, page := c.do("GET", "/api/v1/messages?folder=INBOX&q="+url.QueryEscape(subj), nil)
+		if list, _ := page["messages"].([]any); len(list) > 0 {
+			m := list[0].(map[string]any)
+			if m["priority"] != float64(1) {
+				t.Errorf("list priority: %v", m["priority"])
+			}
+			uid = m["uid"].(float64)
+		} else {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if uid == 0 {
+		t.Fatal("message did not arrive")
+	}
+	_, view := c.do("GET", "/api/v1/message?folder=INBOX&uid="+itoa(int(uid)), nil)
+	msg := view["message"].(map[string]any)
+	if msg["mdn_to"] != "bob@test.local" || msg["priority"] != float64(1) {
+		t.Fatalf("message: %v", msg)
+	}
+	req := map[string]any{"folder": "INBOX", "uid": uid, "send": true}
+	if st, b := c.do("POST", "/api/v1/messages/mdn", req); st != 200 || b["sent"] != true {
+		t.Fatalf("mdn: %d %v", st, b)
+	}
+	if st, b := c.do("POST", "/api/v1/messages/mdn", req); st != 409 || b["error"] != "mdn.not_requested" {
+		t.Errorf("second mdn: %d %v", st, b)
+	}
+	// Уведомление пришло отправителю (тому же ящику).
+	found := false
+	for i := 0; i < 50 && !found; i++ {
+		_, page := c.do("GET", "/api/v1/messages?folder=INBOX&q="+url.QueryEscape("Прочитано: "+subj), nil)
+		found = len(page["messages"].([]any)) > 0
+		if !found {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if !found {
+		t.Error("MDN did not arrive")
+	}
+}
