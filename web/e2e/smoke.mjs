@@ -353,6 +353,40 @@ try {
   await pane.locator('.folder', { hasText: fname }).waitFor({ state: 'detached' })
   step('отписанная папка скрыта; папка с подпапкой удалена')
 
+  // Архив по месяцам: «В архив» создаёт Архив/ГГГГ/ММ.
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.nav .item', { hasText: 'Папки' }).click()
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/v1/prefs') && r.request().method() === 'PUT'),
+    page.locator('[data-test=archive-structure]').selectOption('month'),
+  ])
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
+    page.locator('.folder', { hasText: 'Входящие' }).click(),
+  ])
+  await page.locator('.item').first().click()
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/v1/messages/archive') && r.ok()),
+    page.locator('section.reading').getByRole('button', { name: 'В архив' }).click(),
+  ])
+  const now = new Date()
+  const ym = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`
+  const monthFolder = pane.locator(`.folder[data-folder$="/${ym}"]`)
+  await monthFolder.waitFor()
+  await monthFolder.click({ button: 'right' })
+  page.once('dialog', (d) => d.accept())
+  await page.locator('[data-test=folder-menu]').getByRole('menuitem', { name: 'Удалить папку' }).click()
+  await monthFolder.waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.nav .item', { hasText: 'Папки' }).click()
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/v1/prefs') && r.request().method() === 'PUT'),
+    page.locator('[data-test=archive-structure]').selectOption(''),
+  ])
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+  step('«В архив» разложил письмо в папку по месяцу')
+
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
     page.locator('.folder', { hasText: 'Входящие' }).click(),

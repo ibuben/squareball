@@ -1,12 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Pencil, Trash2 } from 'lucide-vue-next'
-import type { Folder } from '../../api'
+import { api, type Folder, type Prefs } from '../../api'
 import {
-  createFolder, deleteFolder, folderParent, folderTitle, loadFolders, renameFolder, state, subscribeFolder,
+  createFolder, deleteFolder, folderParent, folderTitle, loadFolders, renameFolder, reportError, roleFolder, state,
+  subscribeFolder, toast,
 } from '../../store'
 
-onMounted(loadFolders)
+const archive = ref<Prefs['archive_structure'] | null>(null)
+onMounted(async () => {
+  void loadFolders()
+  try { archive.value = (await api.prefs()).prefs.archive_structure } catch (e) { reportError(e) }
+})
+async function setArchive(v: Prefs['archive_structure']) {
+  try {
+    archive.value = (await api.setPrefs({ archive_structure: v })).prefs.archive_structure
+    toast('Сохранено')
+  } catch (e) { reportError(e) }
+}
 
 const hasDelim = computed(() => state.folders.some((f) => f.delimiter))
 const isSystem = (f: Folder) => !!f.role || state.folders.some((x) => x.role && f.delimiter && x.name.startsWith(f.name + f.delimiter))
@@ -67,6 +78,17 @@ async function remove(f: Folder) {
       </label>
       <div class="actions"><button class="btn primary" :disabled="busy || !newName.trim()">Создать</button></div>
     </form>
+
+    <div v-if="roleFolder('archive') && archive !== null" class="card">
+      <label>Кнопка «В архив» кладёт письма
+        <select class="input" :value="archive" data-test="archive-structure"
+                @change="setArchive(($event.target as HTMLSelectElement).value as Prefs['archive_structure'])">
+          <option value="">в папку «{{ folderTitle(roleFolder('archive')) }}»</option>
+          <option value="year">в подпапки по годам: {{ folderTitle(roleFolder('archive')) }} / {{ new Date().getFullYear() }}</option>
+          <option value="month">в подпапки по месяцам: {{ folderTitle(roleFolder('archive')) }} / {{ new Date().getFullYear() }} / {{ String(new Date().getMonth() + 1).padStart(2, '0') }}</option>
+        </select>
+      </label>
+    </div>
 
     <div class="card list">
       <div v-for="f in state.folders" :key="f.name" class="row" :data-folder="f.name">

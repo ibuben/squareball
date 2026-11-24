@@ -6,7 +6,7 @@ import { dateGroup, listDate, who } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  currentFolder, deleteSelected, folderTitle, loadList, moveSelected, openDraft, openMessage, roleFolder, setFlag, state,
+  archiveSelected, currentFolder, deleteSelected, folderTitle, loadList, openDraft, openMessage, roleFolder, setFlag, state,
 } from '../store'
 
 const sentLike = computed(() => ['sent', 'drafts'].includes(currentFolder()?.role ?? ''))
@@ -48,7 +48,7 @@ function quick(action: 'flag' | 'delete' | 'archive', m: Summary) {
   state.selected = new Set([m.uid])
   if (action === 'flag') void setFlag([m.uid], '\\Flagged', !m.flagged)
   else if (action === 'delete') void deleteSelected()
-  else { const a = roleFolder('archive'); if (a) void moveSelected(a.name) }
+  else void archiveSelected()
 }
 
 let searchTimer = 0

@@ -277,6 +277,19 @@ export async function moveSelected(dest: string) {
   } catch (e) { reportError(e); void loadList() }
 }
 
+// archiveSelected переносит письма в «Архив»; структуру (по годам, месяцам) выбирает сервер.
+export async function archiveSelected() {
+  const uids = selectedUIDs()
+  if (!uids.length || !roleFolder('archive')) return
+  const folder = state.folder
+  dropFromList(uids)
+  try {
+    await api.archive(folder, uids)
+    toast('Перемещено в архив')
+    void loadFolders()
+  } catch (e) { reportError(e); void loadList() }
+}
+
 export async function setFlag(uids: number[], flag: '\\Seen' | '\\Flagged', add: boolean) {
   for (const m of state.messages) {
     if (!uids.includes(m.uid)) continue

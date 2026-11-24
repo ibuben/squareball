@@ -54,6 +54,8 @@ export interface Group { id: number; name: string; count: number }
 export interface Collected { email: string; name: string; uses: number; last_used: string }
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
+export interface Prefs { archive_structure: '' | 'year' | 'month' }
+
 export interface PasswordPolicy {
   min_length: number; max_length: number; require_classes: number
   forbid_chars?: string; forbid_mailbox: boolean
@@ -120,6 +122,11 @@ export const api = {
   rawURL: (folder: string, uid: number) => `/api/v1/raw?${q_({ folder, uid })}`,
   flags: (folder: string, uids: number[], flags: string[], add: boolean) =>
     request('POST', '/api/v1/messages/flags', { folder, uids, flags, add }),
+  archive: (folder: string, uids: number[]) =>
+    request<{ ok: boolean; moved: number }>('POST', '/api/v1/messages/archive', { folder, uids }),
+  prefs: () => request<{ prefs: Prefs }>('GET', '/api/v1/prefs'),
+  setPrefs: (p: Partial<Prefs>) => request<{ prefs: Prefs }>('PUT', '/api/v1/prefs', p),
+  zipURL: (folder: string, uid: number, name: string) => `/api/v1/attachments.zip?${q_({ folder, uid, name })}`,
   move: (folder: string, uids: number[], dest: string) =>
     request('POST', '/api/v1/messages/move', { folder, uids, dest }),
   remove: (folder: string, uids: number[]) =>

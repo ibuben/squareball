@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -633,5 +635,85 @@ func TestIntegrationFolders(t *testing.T) {
 	}
 	if st, body := c.do("POST", "/api/v1/folders/empty", map[string]string{"name": "Trash"}); st != 200 || folderNames(body)["Trash"]["total"] != float64(0) {
 		t.Errorf("empty trash: %d %v", st, body)
+	}
+}
+
+func TestIntegrationArchiveAndZip(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	s := newServer(t, testConfig(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+
+	st, d := c.multipart("/api/v1/drafts", `{"subject":"zip test","text":"x"}`,
+		map[string]string{"отчёт.txt": "первый", "../evil.sh": "echo", "data.csv": "a,b"})
+	if st != 200 {
+		t.Fatalf("draft: %d %v", st, d)
+	}
+	ref := d["draft_ref"].(map[string]any)
+	folder, uid := ref["folder"].(string), int(ref["uid"].(float64))
+	resp, err := c.hc.Get(ts.URL + "/api/v1/attachments.zip?folder=" + url.QueryEscape(folder) + "&uid=" + itoa(uid) + "&name=" + url.QueryEscape("Отчёт: май"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/zip" ||
+		!strings.Contains(resp.Header.Get("Content-Disposition"), "zip") {
+		t.Fatalf("zip: %d %v %s", resp.StatusCode, resp.Header, body)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{}
+	for _, f := range zr.File {
+		rc, _ := f.Open()
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		names[f.Name] = string(b)
+	}
+	if len(names) != 3 || names["отчёт.txt"] != "первый" || names["data.csv"] != "a,b" {
+		t.Errorf("zip entries: %v", names)
+	}
+	for n := range names {
+		if strings.ContainsAny(n, `/\`) || strings.HasPrefix(n, ".") {
+			t.Errorf("unsafe entry name %q", n)
+		}
+	}
+
+	// Архив по годам: папка Архив/<год> создаётся сама.
+	if st, b := c.do("PUT", "/api/v1/prefs", map[string]string{"archive_structure": "weekly"}); st != 400 {
+		t.Errorf("bad pref: %d %v", st, b)
+	}
+	if st, b := c.do("PUT", "/api/v1/prefs", map[string]string{"archive_structure": "year"}); st != 200 || b["prefs"].(map[string]any)["archive_structure"] != "year" {
+		t.Fatalf("set pref: %d %v", st, b)
+	}
+	defer c.do("PUT", "/api/v1/prefs", map[string]string{"archive_structure": ""})
+	if st, b := c.do("POST", "/api/v1/messages/archive", map[string]any{"folder": folder, "uids": []int{uid}}); st != 200 || b["moved"] != float64(1) {
+		t.Fatalf("archive: %d %v", st, b)
+	}
+	_, fb := c.do("GET", "/api/v1/folders", nil)
+	var archive string
+	for _, x := range fb["folders"].([]any) {
+		if f := x.(map[string]any); f["role"] == "archive" {
+			archive = f["name"].(string)
+		}
+	}
+	year := archive + "/" + strconv.Itoa(time.Now().Year())
+	yf := folderNames(fb)[year]
+	if yf == nil || yf["total"].(float64) < 1 || yf["subscribed"] != true {
+		t.Fatalf("year folder %s: %v", year, yf)
+	}
+	if st, b := c.do("POST", "/api/v1/folders/delete", map[string]string{"name": year}); st != 200 {
+		t.Errorf("cleanup: %d %v", st, b)
 	}
 }

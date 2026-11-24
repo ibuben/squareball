@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import {
-  Archive, ArrowLeft, Code, Download, Flag, Forward, ImageOff, MailOpen, Paperclip, Pencil, Reply, ReplyAll, ShieldAlert, Trash2,
+  Archive, ArrowLeft, Code, Download, FileArchive, Flag, Forward, ImageOff, MailOpen, Paperclip, Pencil, Reply, ReplyAll, ShieldAlert, Trash2,
 } from 'lucide-vue-next'
 import { api, type Address } from '../api'
 import { escapeHTML, fullAddr, fullDate, replySubject, size, who, whoList } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  currentFolder, deleteSelected, moveSelected, openCompose, openDraft, openMessage, roleFolder, setFlag, state,
+  archiveSelected, currentFolder, deleteSelected, moveSelected, openCompose, openDraft, openMessage, roleFolder, setFlag, state,
 } from '../store'
 
 defineEmits<{ back: [] }>()
@@ -90,7 +90,7 @@ function forward() {
   })
 }
 
-const archive = () => { const a = roleFolder('archive'); if (a) void moveSelected(a.name) }
+const archive = () => void archiveSelected()
 const junk = () => { const j = roleFolder('junk'); if (j) void moveSelected(j.name) }
 
 defineExpose({ reply, forward })
@@ -146,6 +146,12 @@ defineExpose({ reply, forward })
             <span class="faint">{{ size(a.size) }}</span>
             <Download :size="14" class="faint" />
           </a>
+          <a v-if="files.length > 1" class="file zip" data-test="zip-all"
+             :href="api.zipURL(msg.folder, msg.uid, msg.subject || 'attachments')">
+            <FileArchive :size="15" />
+            <span>Все вложения ZIP</span>
+            <Download :size="14" class="faint" />
+          </a>
         </div>
 
         <iframe ref="frame" class="body" title="message" :srcdoc="srcdoc"
@@ -179,6 +185,7 @@ defineExpose({ reply, forward })
   border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none; background: var(--pane-alt);
 }
 .file:hover { border-color: var(--accent); }
+.file.zip { color: var(--accent); border-style: dashed; }
 .body { display: block; width: 100%; min-height: 80px; border: 0; margin-top: 16px; border-radius: 8px; background: #fff; }
 :root:not([data-theme='dark']) .body { margin-left: -16px; width: calc(100% + 32px); }
 @media (max-width: 760px) {

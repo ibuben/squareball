@@ -254,3 +254,8 @@ func unselect(c *imapclient.Client) {
 		_ = c.Unselect().Wait()
 	}
 }
+
+// ErrNoArchive — у ящика нет папки с ролью «Архив».
+var ErrNoArchive = errors.New("archive folder not found")
+
+func asIMAPError(err error, target **imap.Error) bool { return errors.As(err, target) }

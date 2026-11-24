@@ -39,3 +39,15 @@ func TestProtectedAndChildren(t *testing.T) {
 		t.Errorf("children: %+v", ch)
 	}
 }
+
+func TestZipNames(t *testing.T) {
+	used := map[string]bool{}
+	for in, want := range map[string]string{"../../etc/passwd": "_.._etc_passwd", "a\\b.txt": "a_b.txt", "..": "attachment", "c:\x01d": "c_d"} {
+		if got := safeZipName(in); got != want {
+			t.Errorf("safeZipName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if a, b := uniqueName("x.pdf", used), uniqueName("X.pdf", used); a != "x.pdf" || b != "X (2).pdf" {
+		t.Errorf("unique: %q %q", a, b)
+	}
+}
