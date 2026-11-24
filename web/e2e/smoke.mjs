@@ -235,6 +235,57 @@ try {
   step('автоответ сохранён в Sieve; правило и автоответ убраны')
   await page.getByRole('button', { name: 'Почта' }).first().click()
 
+  // Контакты: группа, контакт в ней, импорт vCard, подсказка группы в «Кому».
+  const stamp = Date.now()
+  const groupName = `e2e группа ${stamp}`
+  await page.getByRole('button', { name: 'Контакты' }).first().click()
+  await page.getByRole('heading', { name: 'Контакты' }).waitFor()
+  page.once('dialog', (d) => d.accept(groupName))
+  await page.getByRole('button', { name: 'Новая группа' }).click()
+  await page.locator('.src.on', { hasText: groupName }).waitFor()
+  await page.getByRole('button', { name: 'Новый контакт' }).click()
+  const cform = page.locator('form.card')
+  await cform.getByLabel('Имя', { exact: true }).fill('Алиса')
+  await cform.getByLabel('Фамилия').fill(`E2E ${stamp}`)
+  await cform.locator('input[type=email]').first().fill(USER2)
+  await cform.getByRole('button', { name: 'Сохранить' }).click()
+  await page.locator('.item', { hasText: `Алиса E2E ${stamp}` }).waitFor()
+  await page.locator('.src', { hasText: 'Все контакты' }).click()
+  await page.locator('input[type=file][accept*=vcf]').setInputFiles({
+    name: 'import.vcf', mimeType: 'text/vcard',
+    buffer: Buffer.from(`BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Импорт ${stamp}\r\nEMAIL:import-${stamp}@test.local\r\nEND:VCARD\r\n`),
+  })
+  await page.getByText('Импортировано: 1').waitFor()
+  await page.locator('.item', { hasText: `Импорт ${stamp}` }).waitFor()
+  await shot('10-contacts')
+  step('контакт в группе создан, vCard импортирован')
+
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+  await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+  const gdlg = page.getByRole('dialog').last()
+  await gdlg.locator('.chips input').first().fill('e2e груп')
+  await gdlg.locator('.suggest li', { hasText: groupName }).waitFor()
+  await shot('11-suggest-group')
+  await gdlg.locator('.chips input').first().press('Enter')
+  await gdlg.locator('.chip', { hasText: 'Алиса' }).waitFor()
+  step('группа из подсказки раскрылась в адреса участников')
+  await gdlg.getByRole('button', { name: 'Удалить черновик' }).click() // без подтверждения
+  await gdlg.waitFor({ state: 'detached' })
+
+  // Уборка: контакты и группа этого прогона.
+  await page.getByRole('button', { name: 'Контакты' }).first().click()
+  for (const name of [`Алиса E2E ${stamp}`, `Импорт ${stamp}`]) {
+    await page.locator('.item', { hasText: name }).click()
+    page.once('dialog', (d) => d.accept())
+    await page.locator('.detail').getByRole('button', { name: 'Удалить' }).click()
+    await page.locator('.item', { hasText: name }).waitFor({ state: 'detached' })
+  }
+  await page.locator('.src', { hasText: groupName }).click()
+  page.once('dialog', (d) => d.accept())
+  await page.locator('.src', { hasText: groupName }).getByRole('button', { name: 'Удалить группу' }).click()
+  await page.locator('.src', { hasText: groupName }).waitFor({ state: 'detached' })
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
     page.locator('.folder', { hasText: 'Входящие' }).click(),

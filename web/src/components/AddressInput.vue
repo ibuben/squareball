@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { X } from 'lucide-vue-next'
-import type { Address } from '../api'
+import { computed, ref, watch } from 'vue'
+import { Users, X } from 'lucide-vue-next'
+import { api, type Address, type Suggestion } from '../api'
 import { isEmail, parseAddresses, who } from '../format'
 import { state } from '../store'
 
@@ -9,37 +9,73 @@ const model = defineModel<Address[]>({ required: true })
 defineProps<{ label: string }>()
 const text = ref('')
 const focused = ref(false)
+const remote = ref<Suggestion[]>([])
+const active = ref(0)
 
-// Подсказки из адресов, встречавшихся в загруженных письмах (до появления адресной книги).
-const known = computed(() => {
-  const map = new Map<string, Address>()
-  for (const m of state.messages) for (const a of [...m.from, ...m.to]) {
-    if (a.email && !map.has(a.email.toLowerCase())) map.set(a.email.toLowerCase(), a)
-  }
-  return [...map.values()]
+// Подсказки: адресная книга, группы и собранные адреса с сервера + адреса
+// из загруженных писем (они видны сразу, пока идёт запрос).
+let timer = 0
+let seq = 0
+watch(text, (v) => {
+  clearTimeout(timer)
+  const q = v.trim()
+  if (q.length < 1) { remote.value = []; return }
+  timer = window.setTimeout(async () => {
+    const my = ++seq
+    try {
+      const r = await api.suggest(q)
+      if (my === seq) remote.value = r.suggestions
+    } catch { /* подсказки необязательны */ }
+  }, 150)
 })
-const suggestions = computed(() => {
+
+const suggestions = computed<Suggestion[]>(() => {
   const q = text.value.trim().toLowerCase()
-  if (q.length < 2) return []
+  if (!q) return []
   const chosen = new Set(model.value.map((a) => a.email.toLowerCase()))
-  return known.value
-    .filter((a) => !chosen.has(a.email.toLowerCase()) && (a.email.toLowerCase().includes(q) || a.name?.toLowerCase().includes(q)))
-    .slice(0, 6)
+  const out: Suggestion[] = remote.value.filter((s) => s.kind === 'group' || !chosen.has(s.email!.toLowerCase()))
+  const seen = new Set(out.map((s) => s.email?.toLowerCase()))
+  for (const m of state.messages) {
+    for (const a of [...m.from, ...m.to]) {
+      const e = a.email.toLowerCase()
+      if (!seen.has(e) && !chosen.has(e) && (e.includes(q) || a.name?.toLowerCase().includes(q))) {
+        seen.add(e)
+        out.push({ kind: 'collected', name: a.name ?? '', email: a.email })
+      }
+    }
+  }
+  return out.slice(0, 8)
 })
+watch(suggestions, () => { active.value = 0 })
 
 function commit() {
   const parsed = parseAddresses(text.value)
   if (parsed.length) model.value = [...model.value, ...parsed]
   text.value = ''
 }
-function pick(a: Address) {
-  model.value = [...model.value, a]
+function pick(s: Suggestion) {
+  const chosen = new Set(model.value.map((a) => a.email.toLowerCase()))
+  const add: Address[] = s.kind === 'group'
+    ? (s.members ?? []).filter((m) => !chosen.has(m.email)).map((m) => ({ name: m.name, email: m.email }))
+    : [{ name: s.name || undefined, email: s.email! }]
+  model.value = [...model.value, ...add]
   text.value = ''
+  remote.value = []
 }
 function onKey(e: KeyboardEvent) {
+  const list = suggestions.value
+  if (e.key === 'ArrowDown' && list.length) { e.preventDefault(); active.value = (active.value + 1) % list.length; return }
+  if (e.key === 'ArrowUp' && list.length) { e.preventDefault(); active.value = (active.value - 1 + list.length) % list.length; return }
+  if (e.key === 'Escape') { remote.value = []; text.value = text.value.trim(); return }
   if ((e.key === 'Enter' || e.key === ',' || e.key === ';' || e.key === 'Tab') && text.value.trim()) {
     e.preventDefault()
-    if (suggestions.value.length && e.key !== ',' && e.key !== ';') pick(suggestions.value[0])
+    // Полный адрес без точного совпадения в подсказках добавляем как введён,
+    // а не первой подсказкой (она может быть другим адресом с тем же началом).
+    const typed = text.value.trim().toLowerCase()
+    const exact = list.find((s) => s.email?.toLowerCase() === typed)
+    if (exact) pick(exact)
+    else if (isEmail(typed) && !parseAddresses(text.value).some((a) => !isEmail(a.email))) commit()
+    else if (list.length && e.key !== ',' && e.key !== ';') pick(list[active.value])
     else commit()
   } else if (e.key === 'Backspace' && !text.value && model.value.length) {
     model.value = model.value.slice(0, -1)
@@ -59,9 +95,18 @@ function remove(i: number) { model.value = model.value.filter((_, j) => j !== i)
       <input v-model="text" @keydown="onKey" @focus="focused = true"
              @blur="focused = false; text.trim() && commit()" @paste.prevent="text += $event.clipboardData?.getData('text') ?? ''; commit()" />
     </div>
-    <ul v-if="focused && suggestions.length" class="suggest">
-      <li v-for="s in suggestions" :key="s.email" @mousedown.prevent="pick(s)">
-        <strong>{{ s.name || s.email }}</strong> <span class="faint">{{ s.name ? s.email : '' }}</span>
+    <ul v-if="focused && suggestions.length" class="suggest" role="listbox">
+      <li v-for="(s, i) in suggestions" :key="s.kind + (s.email ?? s.group_id)" role="option"
+          :class="{ on: i === active }" :aria-selected="i === active"
+          @mousedown.prevent="pick(s)" @mouseenter="active = i">
+        <template v-if="s.kind === 'group'">
+          <Users :size="14" class="faint" /> <strong>{{ s.name }}</strong>
+          <span class="faint">группа · {{ s.members?.length }}</span>
+        </template>
+        <template v-else>
+          <strong>{{ s.name || s.email }}</strong> <span class="faint">{{ s.name ? s.email : '' }}</span>
+          <span v-if="s.kind === 'contact'" class="tag">контакт</span>
+        </template>
       </li>
     </ul>
   </div>
@@ -78,5 +123,7 @@ function remove(i: number) { model.value = model.value.filter((_, j) => j !== i)
 .suggest { position: absolute; left: 76px; top: 100%; z-index: 5; margin: 0; padding: 4px; list-style: none; min-width: 260px;
   background: var(--pane); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
 .suggest li { padding: 6px 8px; border-radius: 6px; cursor: pointer; }
-.suggest li:hover { background: var(--hover); }
+.suggest li { display: flex; align-items: center; gap: 6px; }
+.suggest li.on { background: var(--hover); }
+.tag { margin-left: auto; font-size: 11px; color: var(--accent); }
 </style>

@@ -251,6 +251,15 @@ func ensureDefault(ctx context.Context, tx *sql.Tx, mailbox string) error {
 
 // DeleteMailbox удаляет все данные ящика (вызывается из админ-API/адаптера).
 func (s *Store) DeleteMailbox(ctx context.Context, mailbox string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM identities WHERE mailbox = ?`, mailbox)
-	return err
+	for _, q := range []string{
+		`DELETE FROM identities WHERE mailbox = ?`,
+		`DELETE FROM contacts WHERE mailbox = ?`, // group_members — каскадом
+		`DELETE FROM contact_groups WHERE mailbox = ?`,
+		`DELETE FROM collected WHERE mailbox = ?`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q, mailbox); err != nil {
+			return err
+		}
+	}
+	return nil
 }

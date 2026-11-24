@@ -381,3 +381,68 @@ func TestIntegrationSieve(t *testing.T) {
 		t.Fatalf("cleanup: %d %v", st, body)
 	}
 }
+
+func TestIntegrationContacts(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	ts := httptest.NewServer(newServer(t, testConfig(t)).Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	_, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "alice", "password": "Test12345!"})
+	c.csrf = me["csrf"].(string)
+
+	st, g := c.do("POST", "/api/v1/groups", map[string]any{"name": "Команда"})
+	if st != 200 {
+		t.Fatalf("group: %d %v", st, g)
+	}
+	gid := g["id"].(float64)
+	if st, body := c.do("POST", "/api/v1/contacts", map[string]any{"first_name": "Боб", "emails": []any{map[string]any{"value": "not-an-email"}}}); st != 400 {
+		t.Fatalf("invalid email accepted: %d %v", st, body)
+	}
+	st, ct := c.do("POST", "/api/v1/contacts", map[string]any{"first_name": "Боб", "last_name": "Тестов",
+		"emails": []any{map[string]any{"value": "bob@test.local", "label": "work"}}, "groups": []any{gid}})
+	if st != 200 || ct["id"] == nil {
+		t.Fatalf("save: %d %v", st, ct)
+	}
+
+	_, sg := c.do("GET", "/api/v1/contacts/suggest?q=%D0%BA%D0%BE%D0%BC", nil) // "ком"
+	list := sg["suggestions"].([]any)
+	if len(list) != 1 || list[0].(map[string]any)["kind"] != "group" || len(list[0].(map[string]any)["members"].([]any)) != 1 {
+		t.Fatalf("group suggestion: %v", sg)
+	}
+
+	// Импорт vCard: один новый, один дубль по адресу.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "contacts.vcf")
+	fw.Write([]byte("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Новый Контакт\r\nEMAIL:new@test.local\r\nEND:VCARD\r\n" +
+		"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Боб дубль\r\nEMAIL:BOB@test.local\r\nEND:VCARD\r\n"))
+	mw.Close()
+	req, _ := http.NewRequest("POST", ts.URL+"/api/v1/contacts/import", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", c.csrf)
+	if st, body := c.send(req); st != 200 || body["added"] != 1.0 || body["skipped"] != 1.0 {
+		t.Fatalf("import: %d %v", st, body)
+	}
+
+	res, err := c.hc.Get(ts.URL + "/api/v1/contacts/export?format=csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csvData, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if !strings.Contains(string(csvData), "new@test.local") || !strings.Contains(res.Header.Get("Content-Disposition"), ".csv") {
+		t.Fatalf("export: %s %s", res.Header, csvData)
+	}
+
+	// Получатели отправленного письма попадают в собранные адреса.
+	if st, body := c.multipart("/api/v1/send", `{"to":[{"email":"bob@test.local","name":"Боб"}],"cc":[{"email":"carol@test.local","name":"Кэрол"}],"subject":"collect","text":"x"}`, nil); st != 200 {
+		t.Fatalf("send: %d %v", st, body)
+	}
+	_, coll := c.do("GET", "/api/v1/contacts/collected?q=carol", nil)
+	if l := coll["collected"].([]any); len(l) != 1 || l[0].(map[string]any)["name"] != "Кэрол" {
+		t.Fatalf("collected: %v", coll)
+	}
+}

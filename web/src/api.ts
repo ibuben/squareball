@@ -45,6 +45,15 @@ export interface SieveState {
   extensions: Record<string, boolean>
 }
 
+export interface Labeled { value: string; label?: string }
+export interface Contact {
+  id: number; name: string; first_name: string; last_name: string; org: string; title: string; notes: string
+  emails: Labeled[]; phones: Labeled[]; groups: number[]; updated_at?: string
+}
+export interface Group { id: number; name: string; count: number }
+export interface Collected { email: string; name: string; uses: number; last_used: string }
+export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, public detail?: string) {
     super(detail || code)
@@ -77,7 +86,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   return data as T
 }
 
-const q = (params: Record<string, string | number | undefined>) =>
+const q_ = (params: Record<string, string | number | undefined>) =>
   new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]),
   ).toString()
@@ -89,12 +98,12 @@ export const api = {
   logout: () => request('POST', '/api/v1/auth/logout'),
   folders: () => request<{ folders: Folder[] }>('GET', '/api/v1/folders'),
   messages: (folder: string, offset = 0, limit = 50, text = '', filter = '') =>
-    request<Page>('GET', `/api/v1/messages?${q({ folder, offset, limit, q: text, filter })}`),
+    request<Page>('GET', `/api/v1/messages?${q_({ folder, offset, limit, q: text, filter })}`),
   message: (folder: string, uid: number, images = false, peek = false) =>
-    request<MessageView>('GET', `/api/v1/message?${q({ folder, uid, images: images ? 1 : undefined, peek: peek ? 1 : undefined })}`),
+    request<MessageView>('GET', `/api/v1/message?${q_({ folder, uid, images: images ? 1 : undefined, peek: peek ? 1 : undefined })}`),
   partURL: (folder: string, uid: number, index: number, download = false) =>
-    `/api/v1/part?${q({ folder, uid, index, download: download ? 1 : undefined })}`,
-  rawURL: (folder: string, uid: number) => `/api/v1/raw?${q({ folder, uid })}`,
+    `/api/v1/part?${q_({ folder, uid, index, download: download ? 1 : undefined })}`,
+  rawURL: (folder: string, uid: number) => `/api/v1/raw?${q_({ folder, uid })}`,
   flags: (folder: string, uids: number[], flags: string[], add: boolean) =>
     request('POST', '/api/v1/messages/flags', { folder, uids, flags, add }),
   move: (folder: string, uids: number[], dest: string) =>
@@ -107,6 +116,22 @@ export const api = {
   identities: () => request<{ identities: Identity[]; level: 'single' | 'domain' | 'any' }>('GET', '/api/v1/identities'),
   saveIdentity: (i: Partial<Identity>) => request<Identity>('POST', '/api/v1/identities', i),
   deleteIdentity: (id: number) => request('POST', '/api/v1/identities/delete', { id }),
+  contacts: (q = '', group = 0, offset = 0, limit = 200) =>
+    request<{ contacts: Contact[]; total: number }>('GET', `/api/v1/contacts?${q_({ q, group: group || undefined, offset, limit })}`),
+  saveContact: (c: Partial<Contact>) => request<Contact>('POST', '/api/v1/contacts', c),
+  deleteContacts: (ids: number[]) => request<{ deleted: number }>('POST', '/api/v1/contacts/delete', { ids }),
+  suggest: (q: string) => request<{ suggestions: Suggestion[] }>('GET', `/api/v1/contacts/suggest?${q_({ q })}`),
+  collected: (q = '') => request<{ collected: Collected[] }>('GET', `/api/v1/contacts/collected?${q_({ q })}`),
+  deleteCollected: (emails: string[]) => request('POST', '/api/v1/contacts/collected/delete', { emails }),
+  importContacts: (file: File) => {
+    const f = new FormData()
+    f.append('file', file)
+    return request<{ added: number; skipped: number; limit_reached: boolean }>('POST', '/api/v1/contacts/import', f)
+  },
+  exportURL: (format: 'vcf' | 'csv', group = 0) => `/api/v1/contacts/export?${q_({ format, group: group || undefined })}`,
+  groups: () => request<{ groups: Group[] }>('GET', '/api/v1/groups'),
+  saveGroup: (g: Partial<Group>) => request<Group>('POST', '/api/v1/groups', g),
+  deleteGroup: (id: number) => request('POST', '/api/v1/groups/delete', { id }),
   sieve: () => request<SieveState>('GET', '/api/v1/sieve'),
   putSieve: (body: { mode: 'rules' | 'raw'; tag: string; ruleset?: Ruleset; raw?: string }) =>
     request<SieveState>('PUT', '/api/v1/sieve', body),

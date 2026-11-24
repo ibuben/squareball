@@ -37,7 +37,7 @@ export const state = reactive({
   toasts: [] as Toast[],
   theme: (localStorage.getItem('wm.theme') as 'light' | 'dark' | 'system') || 'system',
   showContact: localStorage.getItem('wm.contact') !== '0',
-  view: 'mail' as 'mail' | 'settings',
+  view: 'mail' as 'mail' | 'settings' | 'contacts',
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
 })

@@ -37,6 +37,7 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("POST /api/v1/messages/delete", s.authed(s.handleDelete))
 	m.HandleFunc("GET /api/v1/sieve", s.authed(s.handleGetSieve))
 	m.HandleFunc("PUT /api/v1/sieve", s.authed(s.handlePutSieve))
+	s.contactRoutes()
 	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
 	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
 	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))
@@ -559,6 +560,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit.Info("message sent", "mailbox", sess.Mailbox, "recipients", len(rcpts), "size", len(raw), "ip", s.ClientIP(r))
+	s.collectRecipients(r, d)
 
 	// Копия в «Отправленные», флаг исходному письму, удаление черновика.
 	// Ошибки здесь не отменяют отправку.

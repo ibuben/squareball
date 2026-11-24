@@ -150,6 +150,8 @@ func (s *Server) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not_found", "")
+	case errors.Is(err, store.ErrTooMany):
+		writeErr(w, http.StatusConflict, "contacts.limit", "")
 	case errors.Is(err, store.ErrLastOne):
 		writeErr(w, http.StatusConflict, "identity.last", "")
 	default:
