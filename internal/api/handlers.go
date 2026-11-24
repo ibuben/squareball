@@ -214,18 +214,23 @@ func intParam(r *http.Request, key string, def, max int) int {
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	q := mail.ListQuery{
-		Folder: r.URL.Query().Get("folder"),
-		Offset: intParam(r, "offset", 0, 0),
-		Limit:  intParam(r, "limit", 50, 200),
-		Text:   r.URL.Query().Get("q"),
-		Filter: r.URL.Query().Get("filter"),
+		Folder:  r.URL.Query().Get("folder"),
+		Offset:  intParam(r, "offset", 0, 0),
+		Limit:   intParam(r, "limit", 50, 200),
+		Text:    r.URL.Query().Get("q"),
+		Filter:  r.URL.Query().Get("filter"),
+		Threads: r.URL.Query().Get("threads") == "1",
 	}
 	if q.Folder == "" {
 		q.Folder = "INBOX"
 	}
 	var page *mail.Page
 	if s.withIMAP(w, r, func(c *imapclient.Client) (err error) {
-		page, err = mail.ListMessages(c, q)
+		if q.Threads {
+			page, err = mail.ListThreads(c, q)
+		} else {
+			page, err = mail.ListMessages(c, q)
+		}
 		return err
 	}) {
 		writeJSON(w, http.StatusOK, page)

@@ -9,7 +9,7 @@ import { escapeHTML, fullAddr, fullDate, replySubject, size, who, whoList } from
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  archiveSelected, currentFolder, deleteSelected, moveSelected, openCompose, openDraft, openMessage, reportError, roleFolder,
+  archiveSelected, currentFolder, deleteSelected, findSummary, moveSelected, openCompose, openDraft, openMessage, reportError, roleFolder,
   setFlag, state, toast,
 } from '../store'
 
@@ -17,7 +17,7 @@ defineEmits<{ back: [] }>()
 
 const frame = ref<HTMLIFrameElement>()
 const msg = computed(() => state.current?.message)
-const summary = computed(() => state.messages.find((m) => m.uid === state.currentUID))
+const summary = computed(() => findSummary(state.currentUID))
 const isDraft = computed(() => currentFolder()?.role === 'drafts')
 const files = computed(() => (msg.value?.attachments ?? []).filter((a) => !a.inline || !a.content_id))
 

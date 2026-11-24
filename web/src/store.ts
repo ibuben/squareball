@@ -41,7 +41,8 @@ export const state = reactive({
   view: 'mail' as 'mail' | 'settings' | 'contacts',
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
-  prefs: { archive_structure: '', mdn_mode: '' } as Prefs,
+  prefs: { archive_structure: '', mdn_mode: '', threads: '' } as Prefs,
+  expanded: new Set<number>(), // развёрнутые цепочки (uid головы)
   templates: [] as Template[],
 })
 
@@ -209,7 +210,7 @@ export async function emptyFolder(f: Folder) {
 export async function readFolder(f: Folder) {
   try {
     afterFolders((await api.readFolder(f.name)).folders)
-    if (state.folder === f.name) for (const m of state.messages) m.seen = true
+    if (state.folder === f.name) for (const m of allSummaries()) m.seen = true
   } catch (e) { folderError(e) }
 }
 
@@ -217,7 +218,14 @@ export async function loadList(append = false) {
   state.loadingList = true
   try {
     const offset = append ? state.messages.length : 0
-    const page = await api.messages(state.folder, offset, 50, state.search, state.filter)
+    const page = await api.messages(state.folder, offset, 50, state.search, state.filter, state.prefs.threads === 'on')
+    // Голова цепочки и её копия внутри thread — один объект: флаги меняются в одном месте.
+    for (const m of page.messages) {
+      if (!m.thread) continue
+      m.depth = m.thread.find((x) => x.uid === m.uid)?.depth // место головы в дереве
+      m.thread = m.thread.map((x) => (x.uid === m.uid ? m : x))
+    }
+    if (!append) state.expanded = new Set()
     state.messages = append ? [...state.messages, ...page.messages] : page.messages
     state.total = page.total
   } catch (e) { reportError(e) } finally { state.loadingList = false }
@@ -234,6 +242,43 @@ export async function openFolder(name: string) {
   await loadList()
 }
 
+// --- цепочки ----------------------------------------------------------------------
+// state.messages — строки списка: письма или (в режиме цепочек) головы цепочек
+// с полным составом в thread. Ниже — помощники, которым всё равно, какой режим.
+
+export const threadOf = (m: Summary): Summary[] => m.thread ?? [m]
+
+// Все загруженные письма, без повторов.
+export function allSummaries(): Summary[] {
+  const out: Summary[] = []
+  const seen = new Set<number>()
+  for (const m of state.messages) for (const x of threadOf(m)) if (!seen.has(x.uid)) { seen.add(x.uid); out.push(x) }
+  return out
+}
+
+export const findSummary = (uid: number) => allSummaries().find((m) => m.uid === uid)
+
+// Строки, видимые в списке: свёрнутая цепочка — одной строкой, развёрнутая — всеми письмами.
+export function visibleRows(): Summary[] {
+  return state.messages.flatMap((m) => (m.thread && state.expanded.has(m.uid) ? m.thread : [m]))
+}
+
+// Голова цепочки, в которой лежит письмо.
+export const headOf = (uid: number) => state.messages.find((m) => threadOf(m).some((x) => x.uid === uid))
+
+export function toggleThread(head: Summary) {
+  const s = new Set(state.expanded)
+  if (s.has(head.uid)) s.delete(head.uid)
+  else s.add(head.uid)
+  state.expanded = s
+}
+
+export async function setThreads(on: boolean) {
+  state.prefs.threads = on ? 'on' : ''
+  try { state.prefs = (await api.setPrefs({ threads: state.prefs.threads })).prefs } catch (e) { reportError(e) }
+  await loadList()
+}
+
 export async function openMessage(uid: number, images = false) {
   state.currentUID = uid
   state.selected = new Set([uid])
@@ -242,7 +287,7 @@ export async function openMessage(uid: number, images = false) {
     const view = await api.message(state.folder, uid, images)
     if (state.currentUID !== uid) return
     state.current = view
-    const s = state.messages.find((m) => m.uid === uid)
+    const s = findSummary(uid)
     if (s && !s.seen) {
       s.seen = true
       const f = currentFolder()
@@ -251,17 +296,47 @@ export async function openMessage(uid: number, images = false) {
   } catch (e) { reportError(e) } finally { state.loadingMessage = false }
 }
 
+// Выбранная свёрнутая цепочка — это все её письма.
 function selectedUIDs(): number[] {
-  return state.selected.size ? [...state.selected] : state.currentUID ? [state.currentUID] : []
+  const base = state.selected.size ? [...state.selected] : state.currentUID ? [state.currentUID] : []
+  const out = new Set<number>()
+  for (const uid of base) {
+    const head = state.messages.find((m) => m.uid === uid)
+    if (head?.thread && !state.expanded.has(head.uid)) head.thread.forEach((x) => out.add(x.uid))
+    else out.add(uid)
+  }
+  return [...out]
 }
 
 function dropFromList(uids: number[]) {
-  const idx = state.messages.findIndex((m) => uids.includes(m.uid))
-  state.messages = state.messages.filter((m) => !uids.includes(m.uid))
-  state.total -= uids.length
+  const gone = new Set(uids)
+  const rows = visibleRows()
+  const idx = rows.findIndex((m) => gone.has(m.uid))
+  const heads: Summary[] = []
+  let removedRows = 0
+  for (const m of state.messages) {
+    if (!m.thread) {
+      if (gone.has(m.uid)) removedRows++
+      else heads.push(m)
+      continue
+    }
+    const rest = m.thread.filter((x) => !gone.has(x.uid))
+    if (!rest.length) { removedRows++; continue }
+    if (rest.length === m.thread.length) { heads.push(m); continue }
+    // Новая голова — самое новое из оставшихся писем.
+    const head = rest.reduce((a, b) => (new Date(b.date) > new Date(a.date) ? b : a))
+    if (head.uid !== m.uid && state.expanded.has(m.uid)) {
+      const s = new Set(state.expanded); s.delete(m.uid); s.add(head.uid); state.expanded = s
+    }
+    head.thread = rest.length > 1 ? rest : undefined
+    heads.push(head)
+  }
+  state.messages = heads
+  state.total -= state.prefs.threads === 'on' ? removedRows : uids.length
   state.selected = new Set()
-  if (uids.includes(state.currentUID)) {
-    const next = state.messages[Math.min(idx, state.messages.length - 1)]
+  if (gone.has(state.currentUID)) {
+    const left = visibleRows()
+    const next = left[Math.min(idx, left.length - 1)]
     state.current = null
     state.currentUID = 0
     if (next) void openMessage(next.uid)
@@ -309,7 +384,7 @@ export async function archiveSelected() {
 }
 
 export async function setFlag(uids: number[], flag: '\\Seen' | '\\Flagged', add: boolean) {
-  for (const m of state.messages) {
+  for (const m of allSummaries()) {
     if (!uids.includes(m.uid)) continue
     if (flag === '\\Seen') m.seen = add
     else m.flagged = add

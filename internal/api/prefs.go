@@ -18,6 +18,8 @@ var prefValues = map[string][]string{
 	// Запросы уведомления о прочтении: "" — спрашивать, always — отправлять
 	// (только если адрес совпадает с отправителем), never — не отвечать.
 	"mdn_mode": {"", "always", "never"},
+	// Список писем цепочками.
+	"threads": {"", "on"},
 }
 
 func (s *Server) prefRoutes() {

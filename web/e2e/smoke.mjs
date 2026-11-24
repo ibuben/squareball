@@ -468,6 +468,53 @@ try {
   await shot('18-inline-image')
   step('шаблон вставлен, картинка ушла в тексте письма (cid) и показалась')
 
+  // Цепочки: письмо себе и ответ на него сворачиваются в одну строку.
+  const thrSubject = `Цепочка e2e ${stamp}`
+  await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+  const tdlg = page.getByRole('dialog').last()
+  await tdlg.locator('.chips input').first().fill('bob@test.local')
+  await tdlg.locator('.field input').last().fill(thrSubject)
+  await tdlg.locator('.ProseMirror').click()
+  await page.keyboard.type('Первое письмо цепочки.')
+  await tdlg.getByRole('button', { name: 'Отправить' }).click()
+  await page.getByText('Письмо отправлено').last().waitFor()
+  await page.locator('.item', { hasText: thrSubject }).first().waitFor({ timeout: 10000 })
+  await page.locator('.item', { hasText: thrSubject }).first().click()
+  await page.locator('section.reading').getByRole('button', { name: 'Ответить' }).click()
+  const rdlg = page.getByRole('dialog').last()
+  await rdlg.locator('.ProseMirror').click()
+  await page.keyboard.type('Ответ в цепочке.')
+  await rdlg.getByRole('button', { name: 'Отправить' }).click()
+  await page.getByText('Письмо отправлено').last().waitFor()
+  await page.locator('.item', { hasText: `Re: ${thrSubject}` }).waitFor({ timeout: 10000 })
+
+  if (await page.locator('[data-test=threads-switch]').getAttribute('aria-checked') === 'true') {
+    await Promise.all([page.waitForResponse((r) => r.url().includes('/api/v1/messages?')), page.locator('[data-test=threads-switch]').click()])
+  }
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('threads=1')),
+    page.locator('[data-test=threads-switch]').click(),
+  ])
+  const thrRow = page.locator('.item', { hasText: `Re: ${thrSubject}` })
+  await thrRow.locator('[data-test=thread-toggle]', { hasText: '2' }).waitFor()
+  if (await page.locator('.item', { hasText: thrSubject }).count() !== 1) throw new Error('цепочка не свернулась в одну строку')
+  await thrRow.locator('[data-test=thread-toggle]').click()
+  await page.locator('.item.member', { hasText: 'Re: ' + thrSubject }).waitFor()
+  if (await page.locator('.item', { hasText: thrSubject }).count() !== 2) throw new Error('развёрнутая цепочка: не два письма')
+  await shot('19-threads')
+  // Свернуть и удалить цепочку целиком.
+  await page.locator('.item', { hasText: thrSubject }).first().locator('[data-test=thread-toggle]').click()
+  await page.locator('.item', { hasText: thrSubject }).first().click()
+  await page.keyboard.press('Delete')
+  await page.getByText('Перемещено в корзину').last().waitFor()
+  await page.locator('.item', { hasText: thrSubject }).waitFor({ state: 'detached' })
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/v1/messages?') && !r.url().includes('threads=1')),
+    page.locator('[data-test=threads-switch]').click(),
+  ])
+  if (await page.locator('.item', { hasText: thrSubject }).count()) throw new Error('письма цепочки остались во «Входящих»')
+  step('цепочка свернулась, развернулась и удалилась целиком')
+
   await page.getByRole('button', { name: 'Настройки' }).first().click()
   await page.locator('.nav .item', { hasText: 'Шаблоны ответов' }).click()
   page.once('dialog', (d) => d.accept())

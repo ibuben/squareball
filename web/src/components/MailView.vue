@@ -13,7 +13,7 @@ import MessageList from './MessageList.vue'
 import ReadingPane from './ReadingPane.vue'
 import ContactPane from './ContactPane.vue'
 import {
-  applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, openCompose, openFolder, openMessage, setMe, state,
+  applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, visibleRows, openCompose, openFolder, openMessage, setMe, state,
 } from '../store'
 
 const reading = ref<InstanceType<typeof ReadingPane>>()
@@ -56,8 +56,9 @@ async function logout() {
 }
 
 function step(dir: 1 | -1) {
-  const i = state.messages.findIndex((m) => m.uid === state.currentUID)
-  const next = state.messages[i < 0 ? 0 : i + dir]
+  const rows = visibleRows()
+  const i = rows.findIndex((m) => m.uid === state.currentUID)
+  const next = rows[i < 0 ? 0 : i + dir]
   if (next) void openMessage(next.uid)
 }
 
@@ -111,10 +112,9 @@ watch(() => state.folders.find((f) => f.role === 'inbox')?.unread ?? 0, (n) => {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
-  await loadFolders()
+  await Promise.all([loadFolders(), loadPrefs()]) // режим цепочек нужен до первого списка
   await openFolder(state.folders.find((f) => f.role === 'inbox')?.name ?? 'INBOX')
   void loadIdentities()
-  void loadPrefs()
   connectEvents()
   lastPoll = Date.now()
   timer = window.setInterval(() => {

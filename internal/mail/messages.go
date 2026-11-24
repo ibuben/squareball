@@ -40,20 +40,25 @@ type Summary struct {
 	Draft          bool      `json:"draft"`
 	HasAttachments bool      `json:"has_attachments"`
 	Priority       int       `json:"priority,omitempty"` // 1 — высокая, 5 — низкая
+	// Режим цепочек: у строки-цепочки (самое новое письмо) — все письма цепочки
+	// в порядке дерева, включая её саму; Depth — уровень вложенности в дереве.
+	Thread []Summary `json:"thread,omitempty"`
+	Depth  int       `json:"depth,omitempty"`
 }
 
 type Page struct {
-	Total    int       `json:"total"`
+	Total    int       `json:"total"` // строк: писем, а в режиме цепочек — цепочек
 	Offset   int       `json:"offset"`
 	Messages []Summary `json:"messages"`
 }
 
 type ListQuery struct {
-	Folder string
-	Offset int
-	Limit  int
-	Text   string // поиск по заголовкам и тексту
-	Filter string // "" | unread | flagged | unanswered
+	Folder  string
+	Offset  int
+	Limit   int
+	Text    string // поиск по заголовкам и тексту
+	Filter  string // "" | unread | flagged | unanswered
+	Threads bool   // группировать в цепочки (если сервер умеет THREAD)
 }
 
 func addrs(list []imap.Address) []Address {
@@ -101,10 +106,7 @@ func hasAttachments(bs imap.BodyStructure) bool {
 }
 
 // ListMessages возвращает страницу писем, новые сверху.
-func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
-	if _, err := c.Select(q.Folder, nil).Wait(); err != nil {
-		return nil, err
-	}
+func listCriteria(q ListQuery) *imap.SearchCriteria {
 	crit := &imap.SearchCriteria{}
 	if t := strings.TrimSpace(q.Text); t != "" {
 		crit.Text = []string{t}
@@ -117,7 +119,11 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 	case "unanswered":
 		crit.NotFlag = append(crit.NotFlag, imap.FlagAnswered)
 	}
+	return crit
+}
 
+// sortedUIDs — письма папки по дате, новые первыми (SORT или порядок поступления).
+func sortedUIDs(c *imapclient.Client, crit *imap.SearchCriteria) ([]imap.UID, error) {
 	var uids []imap.UID
 	if c.Caps().Has(imap.CapSort) {
 		nums, err := c.UIDSort(&imapclient.SortOptions{
@@ -130,15 +136,26 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 		for _, n := range nums {
 			uids = append(uids, imap.UID(n))
 		}
-	} else {
-		data, err := c.UIDSearch(crit, nil).Wait()
-		if err != nil {
-			return nil, err
-		}
-		all := data.AllUIDs()
-		for i := len(all) - 1; i >= 0; i-- { // по порядку поступления, новые сверху
-			uids = append(uids, all[i])
-		}
+		return uids, nil
+	}
+	data, err := c.UIDSearch(crit, nil).Wait()
+	if err != nil {
+		return nil, err
+	}
+	all := data.AllUIDs()
+	for i := len(all) - 1; i >= 0; i-- { // по порядку поступления, новые сверху
+		uids = append(uids, all[i])
+	}
+	return uids, nil
+}
+
+func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
+	if _, err := c.Select(q.Folder, nil).Wait(); err != nil {
+		return nil, err
+	}
+	uids, err := sortedUIDs(c, listCriteria(q))
+	if err != nil {
+		return nil, err
 	}
 
 	page := &Page{Total: len(uids), Offset: q.Offset, Messages: []Summary{}}
@@ -151,7 +168,20 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 	}
 	window := uids[q.Offset:end]
 
-	bufs, err := c.Fetch(imap.UIDSetNum(window...), &imap.FetchOptions{
+	page.Messages, err = fetchSummaries(c, window)
+	if err != nil {
+		return nil, err
+	}
+	return page, nil
+}
+
+// fetchSummaries загружает строки списка в порядке uids (удалённые пропускаются).
+func fetchSummaries(c *imapclient.Client, uids []imap.UID) ([]Summary, error) {
+	out := []Summary{}
+	if len(uids) == 0 {
+		return out, nil
+	}
+	bufs, err := c.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
 		UID: true, Flags: true, Envelope: true, RFC822Size: true, InternalDate: true,
 		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
 		BodySection:   []*imap.FetchItemBodySection{prioritySection},
@@ -163,7 +193,7 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 	for _, b := range bufs {
 		byUID[b.UID] = b
 	}
-	for _, uid := range window {
+	for _, uid := range uids {
 		b, ok := byUID[uid]
 		if !ok {
 			continue // удалено между SORT и FETCH
@@ -183,9 +213,9 @@ func ListMessages(c *imapclient.Client, q ListQuery) (*Page, error) {
 				s.Date = e.Date
 			}
 		}
-		page.Messages = append(page.Messages, s)
+		out = append(out, s)
 	}
-	return page, nil
+	return out, nil
 }
 
 // Attachment — вложение или inline-часть письма.

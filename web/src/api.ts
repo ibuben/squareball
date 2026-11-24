@@ -18,6 +18,7 @@ export interface Summary {
   uid: number; from: Address[]; to: Address[]; subject: string; date: string; size: number
   seen: boolean; flagged: boolean; answered: boolean; forwarded: boolean; draft: boolean
   has_attachments: boolean; priority?: 1 | 5
+  thread?: Summary[]; depth?: number // режим цепочек
 }
 export interface Page { total: number; offset: number; messages: Summary[] }
 export interface Attachment {
@@ -56,7 +57,7 @@ export interface Collected { email: string; name: string; uses: number; last_use
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
 export interface Template { id: number; name: string; html: string }
-export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never' }
+export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never'; threads: '' | 'on' }
 
 export interface PasswordPolicy {
   min_length: number; max_length: number; require_classes: number
@@ -115,8 +116,8 @@ export const api = {
     request<{ folders: Folder[] }>('POST', '/api/v1/folders/subscribe', { name, subscribed }),
   emptyFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/empty', { name }),
   readFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/read', { name }),
-  messages: (folder: string, offset = 0, limit = 50, text = '', filter = '') =>
-    request<Page>('GET', `/api/v1/messages?${q_({ folder, offset, limit, q: text, filter })}`),
+  messages: (folder: string, offset = 0, limit = 50, text = '', filter = '', threads = false) =>
+    request<Page>('GET', `/api/v1/messages?${q_({ folder, offset, limit, q: text, filter, threads: threads ? 1 : undefined })}`),
   message: (folder: string, uid: number, images = false, peek = false) =>
     request<MessageView>('GET', `/api/v1/message?${q_({ folder, uid, images: images ? 1 : undefined, peek: peek ? 1 : undefined })}`),
   partURL: (folder: string, uid: number, index: number, download = false) =>

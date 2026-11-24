@@ -1,23 +1,41 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Flag, Paperclip, Reply, Forward, Search, Trash2, Archive } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronRight, Flag, Forward, MessagesSquare, Paperclip, Reply, Search, Trash2 } from 'lucide-vue-next'
 import type { Summary } from '../api'
 import { dateGroup, listDate, who } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  archiveSelected, currentFolder, deleteSelected, folderTitle, loadList, openDraft, openMessage, roleFolder, setFlag, state,
+  archiveSelected, currentFolder, deleteSelected, folderTitle, headOf, loadList, setThreads, threadOf, toggleThread, visibleRows, openDraft, openMessage, roleFolder, setFlag, state,
 } from '../store'
 
 const sentLike = computed(() => ['sent', 'drafts'].includes(currentFolder()?.role ?? ''))
 
+// Строка списка: письмо и, если это голова свёрнутой цепочки или корень развёрнутой, — цепочка.
+interface Row { m: Summary; head?: Summary; collapsed: boolean; size: number }
+const threads = computed(() => state.prefs.threads === 'on')
+
+const rows = computed<Row[]>(() => visibleRows().map((m) => {
+  const head = m.thread ? m : undefined
+  if (head && !state.expanded.has(head.uid)) return { m, head, collapsed: true, size: head.thread!.length }
+  const h = threads.value ? headOf(m.uid) : undefined
+  // В развёрнутой цепочке переключатель — у её первого письма.
+  if (h?.thread && h.thread[0].uid === m.uid) return { m, head: h, collapsed: false, size: h.thread.length }
+  return { m, collapsed: false, size: 0 }
+}))
+
+// Свёрнутая цепочка показывает сводку: непрочитанное, флаг, вложения — по всем письмам.
+const any = (r: Row, f: (m: Summary) => boolean) => (r.collapsed && r.head ? threadOf(r.head).some(f) : f(r.m))
+const unreadIn = (r: Row) => (r.collapsed && r.head ? threadOf(r.head).filter((x) => !x.seen).length : 0)
+
 const groups = computed(() => {
-  const out: { label: string; items: Summary[] }[] = []
-  for (const m of state.messages) {
-    const label = dateGroup(m.date)
+  const out: { label: string; items: Row[] }[] = []
+  for (const r of rows.value) {
+    // Вся цепочка — в группе даты её самого нового письма.
+    const label = dateGroup((threads.value ? headOf(r.m.uid) ?? r.m : r.m).date)
     const last = out[out.length - 1]
-    if (last && last.label === label) last.items.push(m)
-    else out.push({ label, items: [m] })
+    if (last && last.label === label) last.items.push(r)
+    else out.push({ label, items: [r] })
   }
   return out
 })
@@ -29,7 +47,7 @@ function onClick(e: MouseEvent, m: Summary) {
     s.has(m.uid) ? s.delete(m.uid) : s.add(m.uid)
     state.selected = s
   } else if (e.shiftKey && lastClicked) {
-    const ids = state.messages.map((x) => x.uid)
+    const ids = visibleRows().map((x) => x.uid)
     const [a, b] = [ids.indexOf(lastClicked), ids.indexOf(m.uid)].sort((x, y) => x - y)
     state.selected = new Set(ids.slice(a, b + 1))
   } else {
@@ -64,6 +82,10 @@ function onSearch() {
       <div class="title">
         <h2 class="ellipsis">{{ folderTitle(currentFolder()) }}</h2>
         <span class="faint">{{ state.total }}</span>
+        <button class="threads" :class="{ on: threads }" role="switch" :aria-checked="threads" data-test="threads-switch"
+                title="Группировать письма в цепочки" @click="setThreads(!threads)">
+          <MessagesSquare :size="15" /> <span>Цепочки</span>
+        </button>
       </div>
       <label class="search">
         <Search :size="15" class="faint" />
@@ -81,8 +103,10 @@ function onSearch() {
       <p v-if="!state.loadingList && !state.messages.length" class="empty faint">{{ t('list.empty') }}</p>
       <template v-for="g in groups" :key="g.label">
         <div class="group">{{ g.label }}</div>
-        <article v-for="m in g.items" :key="m.uid" class="item" :data-uid="m.uid"
-                 :class="{ unread: !m.seen, selected: state.selected.has(m.uid), current: m.uid === state.currentUID }"
+        <article v-for="{ m, head, collapsed, size } in g.items" :key="m.uid" class="item" :data-uid="m.uid"
+                 :class="{ unread: any({ m, head, collapsed, size }, (x) => !x.seen), selected: state.selected.has(m.uid),
+                           current: m.uid === state.currentUID, member: threads && !head && !!headOf(m.uid)?.thread }"
+                 :style="m.depth && !collapsed ? { paddingLeft: `${14 + Math.min(m.depth, 6) * 14}px` } : undefined"
                  draggable="true" tabindex="0"
                  @click="onClick($event, m)" @keydown.enter="openMessage(m.uid)"
                  @dblclick="currentFolder()?.role === 'drafts' && openDraft(m.uid)"
@@ -93,13 +117,19 @@ function onSearch() {
               <span class="from ellipsis">{{ sentLike ? (who(m.to[0]) || '—') : who(m.from[0]) }}</span>
               <Reply v-if="m.answered" :size="13" class="faint" />
               <Forward v-if="m.forwarded" :size="13" class="faint" />
-              <Paperclip v-if="m.has_attachments" :size="13" class="faint" />
+              <Paperclip v-if="any({ m, head, collapsed, size }, (x) => x.has_attachments)" :size="13" class="faint" />
               <span class="date faint">{{ listDate(m.date) }}</span>
             </div>
             <div class="row2">
+              <button v-if="head" class="thread-toggle" :class="{ open: !collapsed }" data-test="thread-toggle"
+                      :aria-expanded="!collapsed" :title="collapsed ? 'Показать цепочку' : 'Свернуть цепочку'"
+                      @click.stop="toggleThread(head)">
+                <component :is="collapsed ? ChevronRight : ChevronDown" :size="13" />
+                {{ size }}<template v-if="unreadIn({ m, head, collapsed, size })"> · {{ unreadIn({ m, head, collapsed, size }) }} нов.</template>
+              </button>
               <span v-if="m.priority === 1" class="prio" title="Высокая важность">!</span>
               <span class="subject ellipsis">{{ m.subject || t('list.nosubject') }}</span>
-              <Flag v-if="m.flagged" :size="13" class="flag" />
+              <Flag v-if="any({ m, head, collapsed, size }, (x) => x.flagged)" :size="13" class="flag" />
             </div>
           </div>
           <div class="hover-actions" @click.stop>
@@ -140,6 +170,14 @@ h2 { margin: 0; font-size: 17px; }
 .from { flex: 1; }
 .subject { flex: 1; color: var(--text-2); }
 .prio { flex: none; color: var(--danger); font-weight: 800; margin-right: 4px; }
+.thread-toggle { flex: none; margin-right: 2px; display: inline-flex; align-items: center; gap: 2px; height: 20px; padding: 0 6px 0 3px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--pane); color: var(--text-2); font-size: 12px; }
+.thread-toggle:hover, .thread-toggle.open { border-color: var(--accent); color: var(--accent); }
+.item.member { background: color-mix(in srgb, var(--pane-alt) 60%, transparent); }
+.item.member.selected { background: var(--selected); }
+.threads { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 12px; background: none; color: var(--text-2); font-size: 12px; }
+.threads.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
 .item.unread .from, .item.unread .subject { font-weight: 700; color: var(--text); }
 .item.unread::before {
   content: ''; position: absolute; left: 4px; top: 50%; width: 6px; height: 6px; margin-top: -3px;

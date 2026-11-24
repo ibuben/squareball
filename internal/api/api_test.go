@@ -863,3 +863,80 @@ func TestIntegrationInlineImages(t *testing.T) {
 	}
 	c.do("POST", "/api/v1/drafts/discard", ref2)
 }
+
+func TestIntegrationThreads(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	s := newServer(t, testConfig(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+	token := "thr" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	send := func(subject string, extra map[string]any) {
+		body := map[string]any{"to": []map[string]string{{"email": "bob@test.local"}}, "subject": subject, "text": "x"}
+		for k, v := range extra {
+			body[k] = v
+		}
+		b, _ := json.Marshal(body)
+		if st, r := c.multipart("/api/v1/send", string(b), nil); st != 200 {
+			t.Fatalf("send: %d %v", st, r)
+		}
+	}
+	list := func(q string) map[string]any {
+		var page map[string]any
+		for i := 0; i < 50; i++ {
+			_, page = c.do("GET", "/api/v1/messages?folder=INBOX&threads=1&q="+url.QueryEscape(q), nil)
+			if n := len(page["messages"].([]any)); n > 0 {
+				return page
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return page
+	}
+	send("Начало "+token, nil)
+	first := list("Начало " + token)["messages"].([]any)[0].(map[string]any)
+	_, v := c.do("GET", "/api/v1/message?peek=1&folder=INBOX&uid="+itoa(int(first["uid"].(float64))), nil)
+	msgID := v["message"].(map[string]any)["message_id"].(string)
+	time.Sleep(1100 * time.Millisecond) // разные секунды в Date — однозначный порядок
+	send("Re: Начало "+token, map[string]any{"in_reply_to": msgID})
+	time.Sleep(1100 * time.Millisecond)
+	send("Отдельное "+token, nil)
+
+	var page map[string]any
+	for i := 0; i < 50; i++ {
+		_, page = c.do("GET", "/api/v1/messages?folder=INBOX&threads=1&q="+token, nil)
+		if page["total"] == float64(2) {
+			if th, _ := page["messages"].([]any)[1].(map[string]any)["thread"].([]any); len(th) == 2 {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	rows := page["messages"].([]any)
+	if page["total"] != float64(2) || len(rows) != 2 {
+		t.Fatalf("threads: %v", page)
+	}
+	if r0 := rows[0].(map[string]any); r0["subject"] != "Отдельное "+token || r0["thread"] != nil {
+		t.Errorf("newest single thread first: %v", r0)
+	}
+	head := rows[1].(map[string]any)
+	th := head["thread"].([]any)
+	if head["subject"] != "Re: Начало "+token || len(th) != 2 {
+		t.Fatalf("thread head: %v", head)
+	}
+	if a, b := th[0].(map[string]any), th[1].(map[string]any); a["subject"] != "Начало "+token || a["depth"] != nil || b["depth"] != float64(1) {
+		t.Errorf("tree order/depth: %v / %v", a, b)
+	}
+	// Без threads=1 — обычный список из трёх писем.
+	_, flat := c.do("GET", "/api/v1/messages?folder=INBOX&q="+token, nil)
+	if flat["total"] != float64(3) {
+		t.Errorf("flat total: %v", flat["total"])
+	}
+}

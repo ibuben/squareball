@@ -5,7 +5,7 @@ import { api } from '../api'
 import { listDate, who } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
-import { currentFolder, openCompose, openMessage, reportError, state, toast } from '../store'
+import { allSummaries, currentFolder, openCompose, openMessage, reportError, state, toast } from '../store'
 
 // Сводка о собеседнике, как боковая панель в eM Client: карточка и переписка из текущей папки.
 // В «Отправленных» и «Черновиках» собеседник — получатель, а не сам пользователь.
@@ -17,7 +17,7 @@ const person = computed(() => {
 const history = computed(() => {
   const email = person.value?.email.toLowerCase()
   if (!email) return []
-  return state.messages
+  return allSummaries()
     .filter((m) => (outgoing.value ? m.to : m.from).some((a) => a.email.toLowerCase() === email))
     .slice(0, 12)
 })
