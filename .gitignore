@@ -3,3 +3,29 @@
 /web/e2e/out/
 /internal/web/dist/*
 !/internal/web/dist/.gitkeep
+
+# Локальный запуск (make run, «Без systemd» в README): конфиг, секреты и база
+# появляются в рабочем каталоге. В них ключи сессий, пароли и данные ящиков.
+/config.yaml
+/webmail.env
+.env
+*.key
+*.pass
+*.token
+*.pem
+*.crt
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.mbox
+*.eml
+*.log
+
+# Профили тестов, редакторы и ОС.
+*.out
+*.test
+.idea/
+.vscode/
+*.swp
+.DS_Store
