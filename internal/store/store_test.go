@@ -183,3 +183,34 @@ func TestAddressBooks(t *testing.T) {
 		t.Fatalf("cards after account delete: %d", n)
 	}
 }
+
+func TestStaleDavPreset(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	a1, _ := s.AddDavAccount(ctx, "u@ex.uz", DavAccount{Preset: "domain", Name: "Colleagues", URL: "http://d/"})
+	a2, _ := s.AddDavAccount(ctx, "v@other.uz", DavAccount{Preset: "domain", Name: "Colleagues", URL: "http://d/"})
+	_, _ = s.AddDavAccount(ctx, "u@ex.uz", DavAccount{Preset: "mailbox", Name: "Contacts", URL: "http://m/"})
+	_ = s.SetDavAccountState(ctx, a1.ID, "")
+	_ = s.SetDavAccountState(ctx, a2.ID, "")
+	n, err := s.StaleDavPreset(ctx, "domain", "ex.uz")
+	if err != nil || n != 1 {
+		t.Fatalf("stale domain: %d %v", n, err)
+	}
+	list, _ := s.DavAccounts(ctx, "u@ex.uz")
+	var domainStale, mailboxKept bool
+	for _, a := range list {
+		switch a.Preset {
+		case "domain":
+			domainStale = a.Synced.IsZero()
+		case "mailbox":
+			mailboxKept = true // untouched by StaleDavPreset("domain", …)
+		}
+	}
+	if !domainStale || !mailboxKept {
+		t.Fatalf("domain stale=%v mailbox kept=%v list=%+v", domainStale, mailboxKept, list)
+	}
+	other, _ := s.DavAccounts(ctx, "v@other.uz")
+	if other[0].Synced.IsZero() {
+		t.Fatal("other domain must stay synced")
+	}
+}

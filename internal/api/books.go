@@ -17,6 +17,7 @@ import (
 
 	"github.com/ibuben/squareball/ext"
 	"github.com/ibuben/squareball/internal/contacts"
+	"github.com/ibuben/squareball/internal/session"
 	"github.com/ibuben/squareball/internal/store"
 )
 
@@ -27,7 +28,9 @@ import (
 // Пароль учётки, добавленной пользователем, хранится зашифрованным ключом,
 // выведенным из секрета сессий: иначе синхронизация в следующих сессиях
 // невозможна. Пресеты администратора с паролем ящика (ext.PasswordSession)
-// пароль не хранят — синхронизируются только в сессии с паролем.
+// пароль не хранят: при обычном входе берётся пароль сессии, при
+// impersonation (SSO из панели) для доверенных пресетов на loopback —
+// пароль мастер-учётки IMAP (локальный Radicale его принимает).
 
 const (
 	bookStale       = 15 * time.Minute // автоматическая синхронизация не чаще
@@ -160,16 +163,38 @@ func (s *Server) davCreds(r *http.Request, src ext.ContactSource, a store.DavAcc
 		acc = p.Account
 		acc.Trusted = true
 		if acc.Password == ext.PasswordSession {
-			if sess.AuthMode == ext.AuthImpersonation {
-				return acc, p.ReadOnly, errNoSessionPassword
-			}
-			if acc.Password, err = sess.Password(s.sessions); err != nil {
+			if acc.Password, err = s.davSessionPassword(sess, acc); err != nil {
 				return acc, p.ReadOnly, err
 			}
 		}
 		return acc, p.ReadOnly, nil
 	}
 	return acc, false, ext.ErrContactNotFound
+}
+
+// davSessionPassword — пароль ящика из сессии или мастер-пароль для
+// локального доверенного CardDAV при входе из панели (impersonation).
+func (s *Server) davSessionPassword(sess *session.Session, acc ext.ContactAccount) (string, error) {
+	if sess.AuthMode == ext.AuthImpersonation {
+		if s.masterPw == "" || !acc.Trusted || !davLoopback(acc.URL) {
+			return "", errNoSessionPassword
+		}
+		return s.masterPw, nil
+	}
+	return sess.Password(s.sessions)
+}
+
+func davLoopback(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 // davErrCode — код ошибки для интерфейса.

@@ -51,6 +51,9 @@ func (f *fakeCore) DeleteMailboxData(_ context.Context, mb string) error {
 	f.deleted = append(f.deleted, mb)
 	return nil
 }
+func (f *fakeCore) StaleContactPreset(_ context.Context, preset, domain string) (int, error) {
+	return 0, nil
+}
 
 type node struct{ cfg Config }
 

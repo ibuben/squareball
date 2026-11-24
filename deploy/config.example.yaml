@@ -103,5 +103,7 @@ smtp:
 #         url: https://cloud.example.com/remote.php/dav/addressbooks/users/%u/
 #         username: "%u"              # %u — ящик, %l — имя до @, %d — домен
 #         password: session           # или password_file: /etc/webmail/carddav.pass
+#                                     # при входе из панели session работает только для url на 127.0.0.1/localhost/::1
+#                                     # (подставляется мастер-пароль IMAP), см. docs/integration.md
 #         readonly: false
 #         domains: []                 # пусто — все домены

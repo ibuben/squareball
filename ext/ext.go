@@ -61,6 +61,10 @@ type Core interface {
 	// хранит (отправители, контакты, настройки, шаблоны, словарь, учётки
 	// внешних книг). Письма на IMAP-сервере не трогает.
 	DeleteMailboxData(ctx context.Context, mailbox string) error
+	// StaleContactPreset помечает учётки внешнего пресета (например "domain")
+	// как устаревшие, чтобы клиент снова синхронизировал книги. domain пуст —
+	// все ящики; иначе только *@domain. Возвращает число затронутых учёток.
+	StaleContactPreset(ctx context.Context, preset, domain string) (int, error)
 }
 
 // AuthMode — способ, которым ядро аутентифицируется в IMAP/SMTP для сессии.

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -160,6 +161,48 @@ func (s *Store) SetDavAccountState(ctx context.Context, id int64, errText string
 	_, err := s.db.ExecContext(ctx, `UPDATE dav_accounts SET error = ?, synced_at = ? WHERE id = ?`,
 		errText, time.Now().UTC().Format(tsLayout), id)
 	return err
+}
+
+// StaleDavPreset clears synced_at on preset accounts (and their books) so the
+// next client sync pulls fresh cards. domain empty → all mailboxes.
+func (s *Store) StaleDavPreset(ctx context.Context, preset, domain string) (int, error) {
+	if preset == "" {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	q := `UPDATE dav_accounts SET synced_at = '', error = '' WHERE preset = ?`
+	args := []any{preset}
+	if domain != "" {
+		q += ` AND mailbox LIKE ? ESCAPE '\'`
+		args = append(args, "%@"+escapeLike(domain))
+	}
+	res, err := tx.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	bq := `UPDATE address_books SET synced_at = '', error = '' WHERE account_id IN (SELECT id FROM dav_accounts WHERE preset = ?`
+	bargs := []any{preset}
+	if domain != "" {
+		bq += ` AND mailbox LIKE ? ESCAPE '\'`
+		bargs = append(bargs, "%@"+escapeLike(domain))
+	}
+	bq += `)`
+	if _, err := tx.ExecContext(ctx, bq, bargs...); err != nil {
+		return 0, err
+	}
+	return int(n), tx.Commit()
+}
+
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 // Books — внешние книги ящика с числом карточек.

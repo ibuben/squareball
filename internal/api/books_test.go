@@ -146,4 +146,17 @@ func radicaleGet(t *testing.T, path string) string {
 
 var _ ext.ContactSource = (*carddav.Adapter)(nil)
 
+func TestDavLoopback(t *testing.T) {
+	for _, u := range []string{"http://127.0.0.1:5232/", "http://localhost/bob%40example.com/", "http://[::1]/"} {
+		if !davLoopback(u) {
+			t.Fatalf("want loopback: %s", u)
+		}
+	}
+	for _, u := range []string{"https://dav.example.com/", "http://10.0.0.1/", "", "not-a-url"} {
+		if davLoopback(u) {
+			t.Fatalf("want remote: %s", u)
+		}
+	}
+}
+
 func toJSON(v any) string { b, _ := json.Marshal(v); return string(b) }

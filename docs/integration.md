@@ -161,12 +161,13 @@ Go: `panel.Sign(key, panel.Claims{Sub: …, Exp: …, Jti: …, Lang: "ru", Them
 
 ## 4. Служебный API
 
-Все запросы — `POST` с JSON `{"mailbox": "local@domain"}` и заголовком `Authorization: Bearer <panel-api.token>`. Принимаются только с адресов из `allowed_ips`. Адрес клиента берётся с учётом `server.trusted_proxies`, как и везде в webmail.
+Все запросы — `POST` с заголовком `Authorization: Bearer <panel-api.token>`; запросы по ящику передают JSON `{"mailbox": "local@domain"}`. Принимаются только с адресов из `allowed_ips`. Адрес клиента берётся с учётом `server.trusted_proxies`, как и везде в webmail.
 
 | Запрос | Когда вызывать | Ответ |
 | --- | --- | --- |
 | `/panel/v1/sessions/end` | пароль сменён в панели, ящик заблокирован или переведён на другой тариф | `{"ok":true,"ended":N}` |
 | `/panel/v1/mailboxes/delete` | ящик удалён | `{"ok":true}` |
+| `/panel/v1/books/stale` | в панели изменились общие контакты домена (пресет CardDAV) | `{"ok":true,"accounts":N}` |
 
 `mailboxes/delete` завершает сессии и удаляет всё, что webmail хранит о ящике: отправителей и подписи, контакты и группы, собранные адреса, шаблоны, личный словарь, настройки и подключённые внешние адресные книги. Письма на IMAP-сервере не трогает. Вызов идемпотентен.
 
@@ -175,6 +176,13 @@ Go: `panel.Sign(key, panel.Claims{Sub: …, Exp: …, Jti: …, Lang: "ru", Them
 ```sh
 curl -sX POST -H "Authorization: Bearer $(cat /etc/webmail/panel-api.token)" \
   -d '{"mailbox":"bob@example.com"}' http://127.0.0.1:8080/panel/v1/sessions/end
+```
+
+`books/stale` — запрос на весь домен, поэтому тело у него другое: `{"preset": "<id пресета>", "domain": "example.com"}`. `preset` обязателен — это `id` из `adapters.carddav.presets`. `domain` необязателен: без него помечаются учётки пресета во всех ящиках, с ним — только в ящиках `*@domain` (домен должен входить в `domains` адаптера панели, иначе `403`). Вызов сбрасывает время синхронизации учёток и их книг, и при следующем открытии контактов клиент заново скачает карточки. `N` — число затронутых учёток (ящиков, которые уже подключали этот пресет). Вызов идемпотентен.
+
+```sh
+curl -sX POST -H "Authorization: Bearer $(cat /etc/webmail/panel-api.token)" \
+  -d '{"preset":"domain","domain":"example.com"}' http://127.0.0.1:8080/panel/v1/books/stale
 ```
 
 Открытая вкладка с почтой после `sessions/end` получает 401 на следующем запросе и показывает форму входа. Поток новых писем закрывается в течение 25 секунд.
@@ -187,6 +195,10 @@ curl -sX POST -H "Authorization: Bearer $(cat /etc/webmail/panel-api.token)" \
 - у встроенных драйверов `exec` и `http` не стоит `verifies_current: true`.
 
 Драйвер получает запрос с `"sso": true` и без `current`. Остальные проверки остаются в силе: политика пароля, утечки HIBP, лимит попыток. После окна текущий пароль спрашивается как обычно.
+
+## 6. Адресные книги CardDAV при входе из панели
+
+Пресет CardDAV с `password: session` берёт пароль ящика из сессии. При входе из панели (impersonation) пароля ящика у webmail нет, поэтому такие книги обычно не синхронизируются. Исключение — локальный сервер: если `url` пресета указывает на `127.0.0.1`, `localhost` или `::1`, webmail подставляет пароль мастер-учётки (`imap.impersonation.master_password_file`). Так работает, например, Radicale на той же машине с аутентификацией через Dovecot: он принимает мастер-пароль так же, как IMAP. Для удалённых серверов и учёток, которые пользователь подключил сам, мастер-пароль не отправляется никогда.
 
 ## Ограничения
 

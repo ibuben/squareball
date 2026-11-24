@@ -211,6 +211,10 @@ func (s *Server) EndSessions(mailbox string) int {
 	return n
 }
 
+func (s *Server) StaleContactPreset(ctx context.Context, preset, domain string) (int, error) {
+	return s.store.StaleDavPreset(ctx, preset, domain)
+}
+
 func (s *Server) DeleteMailboxData(ctx context.Context, mailbox string) error {
 	mb, err := s.loginName(mailbox)
 	if err != nil {

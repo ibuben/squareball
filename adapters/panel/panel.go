@@ -102,6 +102,7 @@ func (a *Adapter) Init(_ context.Context, node ext.ConfigNode, core ext.Core) er
 	if a.apiToken != nil {
 		core.Handle("POST /panel/v1/sessions/end", a.api(a.handleEndSessions))
 		core.Handle("POST /panel/v1/mailboxes/delete", a.api(a.handleDeleteMailbox))
+		core.Handle("POST /panel/v1/books/stale", a.apiAuth(a.handleStaleBooks))
 	}
 	core.Logger().Info("panel adapter", "sso", "/sso/panel", "api", a.apiToken != nil, "domains", a.cfg.Domains)
 	return nil
@@ -409,6 +410,58 @@ func (a *Adapter) handleDeleteMailbox(w http.ResponseWriter, r *http.Request, ma
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// apiAuth — Bearer + IP, без обязательного mailbox в теле (для domain-wide вызовов).
+func (a *Adapter) apiAuth(h http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		ip := a.core.ClientIP(r)
+		if !a.ipAllowed(ip) {
+			a.core.Logger().Warn("panel api: address not allowed", "audit", true, "ip", ip, "path", r.URL.Path)
+			apiErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || subtle.ConstantTimeCompare([]byte(got), a.apiToken) != 1 {
+			a.core.Logger().Warn("panel api: bad token", "audit", true, "ip", ip, "path", r.URL.Path)
+			apiErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		h(w, r)
+	})
+}
+
+func (a *Adapter) handleStaleBooks(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Preset string `json:"preset"`
+		Domain string `json:"domain"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	preset := strings.TrimSpace(in.Preset)
+	domain := strings.ToLower(strings.TrimSpace(in.Domain))
+	if preset == "" {
+		apiErr(w, http.StatusBadRequest, "preset required")
+		return
+	}
+	if domain != "" {
+		if strings.ContainsAny(domain, "@/\\") || !a.domainAllowed(domain) {
+			apiErr(w, http.StatusForbidden, "domain not allowed")
+			return
+		}
+	}
+	n, err := a.core.StaleContactPreset(r.Context(), preset, domain)
+	if err != nil {
+		a.core.Logger().Error("panel api: stale books", "err", err, "preset", preset, "domain", domain)
+		apiErr(w, http.StatusInternalServerError, "stale failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "accounts": n})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
