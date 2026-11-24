@@ -22,19 +22,20 @@ import (
 )
 
 type Config struct {
-	Version  int                  `yaml:"version"`
-	Server   Server               `yaml:"server"`
-	Session  Session              `yaml:"session"`
-	Storage  Storage              `yaml:"storage"`
-	Login    Login                `yaml:"login"`
-	IMAP     IMAP                 `yaml:"imap"`
-	SMTP     SMTP                 `yaml:"smtp"`
-	Sieve    Sieve                `yaml:"sieve"`
-	Password Password             `yaml:"password"`
-	UI       UI                   `yaml:"ui"`
-	Log      Log                  `yaml:"log"`
-	Metrics  Metrics              `yaml:"metrics"`
-	Adapters map[string]yaml.Node `yaml:"adapters"`
+	Version    int                  `yaml:"version"`
+	Server     Server               `yaml:"server"`
+	Session    Session              `yaml:"session"`
+	Storage    Storage              `yaml:"storage"`
+	Login      Login                `yaml:"login"`
+	IMAP       IMAP                 `yaml:"imap"`
+	SMTP       SMTP                 `yaml:"smtp"`
+	Sieve      Sieve                `yaml:"sieve"`
+	Password   Password             `yaml:"password"`
+	Identities Identities           `yaml:"identities"`
+	UI         UI                   `yaml:"ui"`
+	Log        Log                  `yaml:"log"`
+	Metrics    Metrics              `yaml:"metrics"`
+	Adapters   map[string]yaml.Node `yaml:"adapters"`
 }
 
 type Server struct {
@@ -129,6 +130,11 @@ type Sieve struct {
 	Endpoint `yaml:",inline"`
 }
 
+// Identities — какие адреса отправителя пользователь может задавать сам.
+type Identities struct {
+	Level string `yaml:"level"` // single | domain | any
+}
+
 type Password struct {
 	Driver string `yaml:"driver"`
 	Policy struct {
@@ -198,6 +204,7 @@ func Defaults() *Config {
 	c.Sieve.Port = 4190
 	c.Sieve.Security = "starttls"
 	c.Sieve.TLSVerify = true
+	c.Identities.Level = "single"
 	c.Password.Driver = "none"
 	c.Password.Policy.MinLength = 10
 	c.Password.Policy.RequireClasses = 3
@@ -258,6 +265,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Session.SecretFile == "" {
 		add("session.secret_file: required (generate with: webmail gen-secret > FILE)")
+	}
+	if c.Storage.Driver != "sqlite" {
+		add("storage.driver: %q is not implemented yet, use sqlite", c.Storage.Driver)
+	}
+	if !contains([]string{"single", "domain", "any"}, c.Identities.Level) {
+		add("identities.level: must be single, domain or any")
 	}
 	if c.Session.Store != "memory" {
 		add("session.store: %q is not implemented yet, use memory", c.Session.Store)

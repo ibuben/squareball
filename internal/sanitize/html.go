@@ -22,7 +22,7 @@ var policy = func() *bluemonday.Policy {
 		"cellpadding", "cellspacing", "colspan", "rowspan", "dir").Globally()
 	p.AllowAttrs("color", "face", "size").OnElements("font")
 	// Маркер цитаты исходного письма в черновиках и отправленных (см. ComposeWindow).
-	p.AllowAttrs("data-wm-quote").Matching(regexp.MustCompile(`^1$`)).OnElements("div")
+	p.AllowAttrs("data-wm-quote", "data-wm-signature").Matching(regexp.MustCompile(`^1$`)).OnElements("div")
 	p.AllowAttrs("type").Matching(regexp.MustCompile(`^cite$`)).OnElements("blockquote")
 	p.AllowStyles(
 		"color", "background-color", "font-family", "font-size", "font-weight", "font-style",

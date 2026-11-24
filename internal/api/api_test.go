@@ -10,12 +10,14 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ibuben/squareball/internal/config"
+	"github.com/ibuben/squareball/internal/store"
 )
 
 func testConfig(t *testing.T) *config.Config {
@@ -28,13 +30,20 @@ func testConfig(t *testing.T) *config.Config {
 		c.IMAP.Port, c.IMAP.Security, c.IMAP.TLSVerify = 993, "tls", false
 		c.SMTP.Port, c.SMTP.Security, c.SMTP.TLSVerify = 587, "starttls", false
 		c.Login.DefaultDomain = "test.local"
+		c.Sieve.Enabled = true
+		c.Sieve.Endpoint = config.Endpoint{Host: "127.0.0.1", Port: 4190, Security: "starttls", TLSVerify: false}
 	}
 	return c
 }
 
 func newServer(t *testing.T, c *config.Config) *Server {
 	t.Helper()
-	s, err := New(Options{Config: c, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionSecret: bytes.Repeat([]byte("s"), 32)})
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s, err := New(Options{Config: c, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), SessionSecret: bytes.Repeat([]byte("s"), 32), Store: st})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,3 +266,118 @@ func TestIntegrationDrafts(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+func TestIntegrationIdentities(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	ts := httptest.NewServer(newServer(t, testConfig(t)).Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	_, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "alice", "password": "Test12345!"})
+	c.csrf = me["csrf"].(string)
+
+	st, body := c.do("GET", "/api/v1/identities", nil)
+	if st != 200 || len(body["identities"].([]any)) != 1 || body["level"] != "single" {
+		t.Fatalf("list: %d %v", st, body)
+	}
+	if st, body := c.do("POST", "/api/v1/identities", map[string]any{"email": "boss@test.local", "name": "Boss"}); st != 400 {
+		t.Fatalf("foreign address accepted at level single: %d %v", st, body)
+	}
+	st, body = c.do("POST", "/api/v1/identities", map[string]any{
+		"name": "Алиса из поддержки", "email": "alice@test.local", "reply_to": "support@test.local",
+		"signature": `<p>С уважением, Алиса</p><script>alert(1)</script>`, "is_default": false,
+	})
+	if st != 200 {
+		t.Fatalf("save: %d %v", st, body)
+	}
+	if strings.Contains(body["signature"].(string), "script") {
+		t.Fatalf("signature not sanitized: %v", body["signature"])
+	}
+	id := int(body["id"].(float64))
+
+	subject := "Identity IT " + strconv.FormatInt(time.Now().UnixNano(), 10)
+	st, body = c.multipart("/api/v1/send", `{"to":[{"email":"bob@test.local"}],"subject":"`+subject+`","text":"hi","identity_id":`+itoa(id)+`}`, nil)
+	if st != 200 {
+		t.Fatalf("send: %d %v", st, body)
+	}
+	// Копия в «Отправленных»: From — имя отправителя, Reply-To — из отправителя.
+	_, page := c.do("GET", "/api/v1/messages?folder=Sent&q="+strings.ReplaceAll(subject, " ", "+"), nil)
+	msgs := page["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("sent copy not found: %v", page)
+	}
+	uid := int(msgs[0].(map[string]any)["uid"].(float64))
+	_, view := c.do("GET", "/api/v1/message?peek=1&folder=Sent&uid="+itoa(uid), nil)
+	m := view["message"].(map[string]any)
+	from := m["from"].([]any)[0].(map[string]any)
+	rt := m["reply_to"].([]any)[0].(map[string]any)
+	if from["name"] != "Алиса из поддержки" || rt["email"] != "support@test.local" {
+		t.Fatalf("headers: from=%v reply_to=%v", from, rt)
+	}
+
+	if st, _ := c.do("POST", "/api/v1/identities/delete", map[string]any{"id": id}); st != 200 {
+		t.Fatalf("delete: %d", st)
+	}
+}
+
+func TestIntegrationSieve(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	ts := httptest.NewServer(newServer(t, testConfig(t)).Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	_, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	c.csrf = me["csrf"].(string)
+
+	st, cur := c.do("GET", "/api/v1/sieve", nil)
+	if st != 200 || cur["mode"] == nil {
+		t.Fatalf("get: %d %v", st, cur)
+	}
+	ruleset := map[string]any{
+		"rules": []any{map[string]any{"name": "IT-фильтр", "enabled": true, "match": "all", "stop": true,
+			"conditions": []any{map[string]any{"field": "subject", "op": "contains", "value": "[IT-sieve]"}},
+			"actions":    []any{map[string]any{"type": "seen"}, map[string]any{"type": "fileinto", "value": "Archive"}}}},
+		"vacation": map[string]any{"enabled": false, "subject": "", "body": "", "days": 7},
+		"forward":  map[string]any{"enabled": false, "to": "", "keep_copy": false},
+	}
+	// Устаревший tag — конфликт, скрипт не трогаем.
+	if st, body := c.do("PUT", "/api/v1/sieve", map[string]any{"mode": "rules", "tag": "stale", "ruleset": ruleset}); st != 409 {
+		t.Fatalf("stale tag accepted: %d %v", st, body)
+	}
+	st, saved := c.do("PUT", "/api/v1/sieve", map[string]any{"mode": "rules", "tag": cur["tag"], "ruleset": ruleset})
+	if st != 200 {
+		t.Fatalf("put: %d %v", st, saved)
+	}
+	// Ошибка синтаксиса в текстовом режиме возвращается с текстом сервера.
+	if st, body := c.do("PUT", "/api/v1/sieve", map[string]any{"mode": "raw", "tag": saved["tag"], "raw": "if true { fileinto }"}); st != 400 || body["detail"] == "" {
+		t.Fatalf("bad raw: %d %v", st, body)
+	}
+
+	// Правило действительно работает: письмо с меткой в теме уходит в Archive прочитанным.
+	subject := "[IT-sieve] " + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if st, body := c.multipart("/api/v1/send", `{"to":[{"email":"bob@test.local"}],"subject":"`+subject+`","text":"x"}`, nil); st != 200 {
+		t.Fatalf("send: %d %v", st, body)
+	}
+	var found map[string]any
+	for i := 0; i < 20 && found == nil; i++ {
+		time.Sleep(250 * time.Millisecond)
+		_, page := c.do("GET", "/api/v1/messages?folder=Archive&q="+strings.ReplaceAll(subject, " ", "+"), nil)
+		if msgs, _ := page["messages"].([]any); len(msgs) == 1 {
+			found = msgs[0].(map[string]any)
+		}
+	}
+	if found == nil || found["seen"] != true {
+		t.Fatalf("message not filed by sieve: %v", found)
+	}
+
+	// Убираем за собой: пустой набор правил.
+	_, now := c.do("GET", "/api/v1/sieve", nil)
+	empty := map[string]any{"rules": []any{}, "vacation": map[string]any{"days": 7}, "forward": map[string]any{}}
+	if st, body := c.do("PUT", "/api/v1/sieve", map[string]any{"mode": "rules", "tag": now["tag"], "ruleset": empty}); st != 200 {
+		t.Fatalf("cleanup: %d %v", st, body)
+	}
+}

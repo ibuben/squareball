@@ -47,6 +47,7 @@ const ru = {
   'read.attachments': 'Вложения',
   'read.unsubscribe': 'Отписаться',
   'compose.to': 'Кому',
+  'compose.from': 'От',
   'compose.cc': 'Копия',
   'compose.bcc': 'Скрытая',
   'compose.subject': 'Тема',

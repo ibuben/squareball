@@ -10,6 +10,14 @@ import { closeCompose, loadFolders, loadList, state, toast, unsaved, type Compos
 
 const props = defineProps<{ id: number; init: ComposeInit; index: number }>()
 
+// Отправитель и его подпись. Подпись не входит в редактор: при смене
+// отправителя она меняется целиком, а в письмо уходит в <div data-wm-signature>.
+const identityId = ref<number | undefined>(
+  props.init.identityId ?? state.identities.find((i) => i.is_default)?.id ?? state.identities[0]?.id)
+const identity = computed(() => state.identities.find((i) => i.id === identityId.value))
+const signature = computed(() => identity.value?.signature ?? '')
+const fromLabel = (i: { name: string; email: string }) => (i.name ? `${i.name} <${i.email}>` : i.email)
+
 const to = ref<Address[]>(props.init.to ?? [])
 const cc = ref<Address[]>(props.init.cc ?? [])
 const bcc = ref<Address[]>(props.init.bcc ?? [])
@@ -76,8 +84,10 @@ function addFiles(list: FileList | File[] | null | undefined) {
 }
 
 function bodyHTML(): string {
-  const text = editor.value?.getHTML() ?? ''
-  return quote.value ? `${text}<div data-wm-quote="1">${quote.value}</div>` : text
+  let html = editor.value?.getHTML() ?? ''
+  if (signature.value) html += `<div data-wm-signature="1">${signature.value}</div>`
+  if (quote.value) html += `<div data-wm-quote="1">${quote.value}</div>`
+  return html
 }
 function removeQuote() { quote.value = ''; touch() }
 function removeFile(i: number) { files.value.splice(i, 1); touch() }
@@ -90,6 +100,7 @@ function buildForm(): FormData {
     html: bodyHTML(), in_reply_to: props.init.inReplyTo ?? '',
     references: props.init.references ?? [], source: props.init.source ?? null,
     draft_ref: draftRef.value ?? null, keep_attachments: existing.value.map((a) => a.index),
+    identity_id: identityId.value ?? 0,
   }))
   for (const f of files.value) form.append('attachments', f, f.name)
   return form
@@ -191,6 +202,12 @@ async function discard() {
       <button class="icon-btn" :aria-label="'close'" @click="close"><X :size="16" /></button>
     </header>
     <template v-if="!minimized">
+      <div v-if="state.identities.length > 1" class="field">
+        <span class="label">{{ t('compose.from') }}</span>
+        <select v-model="identityId" class="from" @change="touch">
+          <option v-for="i in state.identities" :key="i.id" :value="i.id">{{ fromLabel(i) }}</option>
+        </select>
+      </div>
       <AddressInput v-model="to" :label="t('compose.to')" @update:model-value="touch" />
       <button v-if="!showCc" type="button" class="cc-toggle" @click="showCc = true">{{ t('compose.cc') }} / {{ t('compose.bcc') }}</button>
       <template v-if="showCc">
@@ -204,6 +221,7 @@ async function discard() {
       <div class="body" :class="{ drag: dragging }"
            @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop="dragging = false">
         <RichEditor ref="editor" :content="init.html ?? ''" :placeholder="t('compose.placeholder')" @change="touch" @files="addFiles" @submit="send" />
+        <div v-if="signature" class="sig" v-html="signature" />
         <div v-if="quote" class="quote">
           <div class="quote-bar">
             <button type="button" class="link-btn" @click="quoteOpen = !quoteOpen">
@@ -255,6 +273,9 @@ header .ellipsis { flex: 1; }
 .field input { flex: 1; border: 0; outline: none; background: transparent; height: 32px; }
 .body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .body.drag { background: var(--accent-soft); }
+.sig { padding: 0 14px 10px; color: var(--text-2); font-size: 13px; border-top: 1px dashed var(--border); margin: 0 14px; padding-top: 8px; }
+.sig :deep(p) { margin: 0 0 4px; }
+.from { flex: 1; height: 30px; border: 0; background: transparent; outline: none; }
 .quote { padding: 0 14px 10px; }
 .quote-bar { display: flex; gap: 14px; }
 .link-btn { display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--text-2); font-size: 12px; }

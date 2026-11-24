@@ -21,6 +21,7 @@ type Upload struct {
 
 type Draft struct {
 	From        Address
+	ReplyTo     []Address
 	To, Cc, Bcc []Address
 	Subject     string
 	Text        string
@@ -78,6 +79,9 @@ func Build(d *Draft) ([]byte, string, error) {
 	var h gomail.Header
 	h.SetDate(time.Now())
 	h.SetAddressList("From", toMail([]Address{d.From}))
+	if len(d.ReplyTo) > 0 {
+		h.SetAddressList("Reply-To", toMail(d.ReplyTo))
+	}
 	if len(d.To) > 0 {
 		h.SetAddressList("To", toMail(d.To))
 	}

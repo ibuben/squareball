@@ -35,6 +35,11 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("POST /api/v1/messages/flags", s.authed(s.handleFlags))
 	m.HandleFunc("POST /api/v1/messages/move", s.authed(s.handleMove))
 	m.HandleFunc("POST /api/v1/messages/delete", s.authed(s.handleDelete))
+	m.HandleFunc("GET /api/v1/sieve", s.authed(s.handleGetSieve))
+	m.HandleFunc("PUT /api/v1/sieve", s.authed(s.handlePutSieve))
+	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
+	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
+	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))
 	m.HandleFunc("POST /api/v1/send", s.authed(s.handleSend))
 	m.HandleFunc("POST /api/v1/drafts", s.authed(s.handleSaveDraft))
 	m.HandleFunc("POST /api/v1/drafts/discard", s.authed(s.handleDiscardDraft))
@@ -444,6 +449,8 @@ type sendReq struct {
 	DraftRef *msgRef `json:"draft_ref"`
 	// Индексы вложений из DraftRef, которые остаются в письме.
 	KeepAttachments []int `json:"keep_attachments"`
+	// Отправитель из /identities; 0 — по умолчанию.
+	IdentityID int64 `json:"identity_id"`
 }
 
 // readCompose разбирает multipart-форму письма (поле draft + файлы attachments)
@@ -468,6 +475,10 @@ func (s *Server) readCompose(w http.ResponseWriter, r *http.Request, forDraft bo
 	}
 	if in.HTML != "" {
 		d.HTML = sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML
+	}
+	if err := s.applyIdentity(r, in.IdentityID, d); err != nil {
+		s.storeError(w, err)
+		return nil, nil, false
 	}
 	var total int64
 	if r.MultipartForm != nil {
@@ -543,7 +554,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "send.not_allowed", "")
 		return
 	}
-	if err := mail.Send(&s.cfg.SMTP, cr, sess.Mailbox, rcpts, raw); err != nil {
+	if err := mail.Send(&s.cfg.SMTP, cr, d.From.Email, rcpts, raw); err != nil {
 		s.mailError(w, r, err)
 		return
 	}

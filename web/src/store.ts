@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import {
-  api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Me, type MessageView, type MsgRef, type Summary,
+  api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Identity, type Me, type MessageView, type MsgRef,
+  type Summary,
 } from './api'
 import { t } from './i18n'
 
@@ -13,6 +14,7 @@ export interface ComposeInit {
   // Продолжение черновика: ссылка на него и его вложения.
   draftRef?: MsgRef
   existing?: Attachment[]
+  identityId?: number
 }
 
 interface Toast { id: number; text: string; action?: { label: string; run: () => void } }
@@ -35,13 +37,25 @@ export const state = reactive({
   toasts: [] as Toast[],
   theme: (localStorage.getItem('wm.theme') as 'light' | 'dark' | 'system') || 'system',
   showContact: localStorage.getItem('wm.contact') !== '0',
+  view: 'mail' as 'mail' | 'settings',
+  identities: [] as Identity[],
+  identityLevel: 'single' as 'single' | 'domain' | 'any',
 })
 
+export async function loadIdentities() {
+  try {
+    const r = await api.identities()
+    state.identities = r.identities
+    state.identityLevel = r.level
+  } catch (e) { reportError(e) }
+}
+
 let toastSeq = 0
+// На экране — не больше трёх последних уведомлений.
 export function toast(text: string, action?: Toast['action']) {
   const id = ++toastSeq
-  state.toasts.push({ id, text, action })
-  setTimeout(() => { state.toasts = state.toasts.filter((x) => x.id !== id) }, 6000)
+  state.toasts = [...state.toasts, { id, text, action }].slice(-3)
+  setTimeout(() => { state.toasts = state.toasts.filter((x) => x.id !== id) }, action ? 6000 : 4000)
 }
 
 export function applyTheme() {
@@ -195,7 +209,11 @@ export async function openDraft(uid: number) {
     const v = await api.message(state.folder, uid, true, true)
     const m = v.message
     const { text, quote } = splitQuote(v.body_html)
+    const from = m.from[0]
+    const ident = state.identities.find((i) => i.email.toLowerCase() === from?.email.toLowerCase() && i.name === (from?.name ?? ''))
+      ?? state.identities.find((i) => i.email.toLowerCase() === from?.email.toLowerCase())
     openCompose({
+      identityId: ident?.id,
       to: m.to, cc: m.cc ?? [], bcc: m.bcc ?? [], subject: m.subject, html: text, quote,
       inReplyTo: m.in_reply_to, references: m.references,
       draftRef: { folder: m.folder, uid: m.uid },
@@ -205,12 +223,16 @@ export async function openDraft(uid: number) {
 }
 
 // Делит тело черновика на текст пользователя и цитату (<div data-wm-quote>).
+// Подпись (<div data-wm-signature>) отбрасывается: её заново подставляет отправитель.
 export function splitQuote(html: string): { text: string; quote: string } {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  doc.body.querySelector('div[data-wm-signature]')?.remove()
   const q = doc.body.querySelector('div[data-wm-quote]')
-  if (!q) return { text: html, quote: '' }
-  const quote = q.innerHTML
-  q.remove()
+  let quote = ''
+  if (q) {
+    quote = q.innerHTML
+    q.remove()
+  }
   return { text: doc.body.innerHTML, quote }
 }
 

@@ -22,6 +22,15 @@ page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('stat
 const step = (name) => console.log('✓', name)
 const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` })
 
+// Нажимает кнопку и ждёт ответа PUT /api/v1/sieve; ошибка сохранения — падение теста.
+async function saveSieveVia(button) {
+  const [res] = await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/v1/sieve') && r.request().method() === 'PUT'),
+    button.click(),
+  ])
+  if (!res.ok()) throw new Error(`сохранение Sieve: ${res.status()} ${await res.text()}`)
+}
+
 // USER2 отправляет USER1 письма через API клиента (данные для теста и проверка push).
 async function sendAs(subjects, withAttachment = false) {
   const api = await request.newContext({ baseURL: BASE, extraHTTPHeaders: { Origin: BASE } })
@@ -133,7 +142,7 @@ try {
   if ((await dlg2.locator('.field input').last().inputValue()) !== draftSubject) throw new Error('тема черновика не восстановилась')
   if (!(await dlg2.locator('.chip').count())) throw new Error('получатель черновика не восстановился')
   await dlg2.getByRole('button', { name: 'Отправить' }).click()
-  await page.getByText('Письмо отправлено').last().waitFor()
+  await dlg2.waitFor({ state: 'detached' })
   await page.locator('.item', { hasText: draftSubject }).waitFor({ state: 'detached' })
   step('черновик продолжен, отправлен и удалён из «Черновиков»')
 
@@ -149,6 +158,82 @@ try {
   await sendAs([pushSubject])
   await page.locator('.item', { hasText: pushSubject }).waitFor({ timeout: 10000 })
   step('новое письмо пришло через IDLE без перезагрузки')
+
+  // Настройки: подпись отправителя попадает в письмо.
+  const sigText = `С уважением, Боб ${Date.now()}`
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.getByRole('heading', { name: 'Отправители и подписи' }).waitFor()
+  await page.locator('.row').first().click()
+  await page.getByLabel('Имя').fill('Боб Тестов')
+  await page.locator('.sig-editor .ProseMirror').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type(sigText)
+  await page.getByRole('button', { name: 'Сохранить' }).click()
+  await page.getByText('Сохранено: Боб Тестов').waitFor()
+  await shot('08-settings-identity')
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+  await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+  const sigDlg = page.getByRole('dialog').last()
+  await sigDlg.locator('.sig', { hasText: sigText }).waitFor()
+  const sigSubject = `Подпись e2e ${Date.now()}`
+  await sigDlg.locator('.chips input').first().fill(USER2)
+  await sigDlg.locator('.chips input').first().press('Enter')
+  await sigDlg.locator('.field input').last().fill(sigSubject)
+  await sigDlg.locator('.ProseMirror').click()
+  await page.keyboard.type('Письмо с подписью.')
+  await sigDlg.getByRole('button', { name: 'Отправить' }).click()
+  await sigDlg.waitFor({ state: 'detached' }) // окно закрывается только после успешной отправки
+  await page.locator('.folder', { hasText: 'Отправленные' }).click()
+  await page.locator('.item', { hasText: sigSubject }).click()
+  const sentText = await page.frameLocator('iframe.body').locator('body').innerText()
+  if (!sentText.includes(sigText) || !sentText.includes('Письмо с подписью')) throw new Error('подписи нет в письме: ' + sentText)
+  if (!(await page.locator('.who', { hasText: 'Боб Тестов' }).count())) throw new Error('имя отправителя не применилось')
+  step('подпись и имя отправителя попали в письмо')
+
+  // Фильтр: письмо с меткой в теме сервер кладёт в «Архив».
+  const tagSubject = `[e2e-filter-${Date.now()}]`
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.item', { hasText: 'Фильтры' }).click()
+  await page.getByRole('button', { name: 'Добавить правило' }).waitFor()
+  // Остатки прошлых прогонов (если тест падал до уборки).
+  while (await page.locator('.row', { hasText: 'e2e:' }).count()) {
+    page.once('dialog', (d) => d.accept())
+    await saveSieveVia(page.locator('.row', { hasText: 'e2e:' }).first().getByRole('button', { name: 'Удалить' }))
+  }
+  const ruleName = `e2e: в архив ${Date.now()}`
+  await page.getByRole('button', { name: 'Добавить правило' }).click()
+  const form = page.locator('form.card')
+  await form.getByLabel('Название').fill(ruleName)
+  await form.locator('.line').nth(1).locator('select').first().selectOption('subject')
+  await form.locator('.line').nth(1).locator('input.val').fill(tagSubject)
+  await saveSieveVia(form.getByRole('button', { name: 'Сохранить правило' }))
+  await page.locator('.row', { hasText: ruleName }).waitFor()
+  await shot('09-settings-filters')
+  await sendAs([`${tagSubject} письмо для фильтра`])
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+  await page.locator('.folder', { hasText: 'Архив' }).click()
+  await page.locator('.item', { hasText: tagSubject }).waitFor({ timeout: 10000 })
+  step('фильтр Sieve переложил письмо в «Архив»')
+
+  // Автоответ сохраняется в тот же скрипт; затем убираем за собой правило и автоответ.
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.item', { hasText: 'Автоответ' }).click()
+  await page.locator('[data-test=vacation-enabled]').check()
+  await page.getByLabel('Текст ответа').fill('Я в отпуске (e2e).')
+  await saveSieveVia(page.getByRole('button', { name: 'Сохранить' }))
+  await page.locator('.item', { hasText: 'Фильтры' }).click()
+  await page.getByRole('button', { name: 'Редактировать как текст' }).click()
+  const script = await page.locator('textarea.raw').inputValue()
+  if (!script.includes('vacation') || !script.includes(`# rule:[${ruleName}]`)) throw new Error('скрипт без правила или автоответа:\n' + script)
+  await page.getByRole('button', { name: 'Вернуться к правилам' }).click()
+  page.once('dialog', (d) => d.accept())
+  await saveSieveVia(page.locator('.row', { hasText: ruleName }).getByRole('button', { name: 'Удалить' }))
+  await page.locator('.row', { hasText: ruleName }).waitFor({ state: 'detached' })
+  await page.locator('.item', { hasText: 'Автоответ' }).click()
+  await page.locator('[data-test=vacation-enabled]').uncheck()
+  await saveSieveVia(page.getByRole('button', { name: 'Сохранить' }))
+  step('автоответ сохранён в Sieve; правило и автоответ убраны')
+  await page.getByRole('button', { name: 'Почта' }).first().click()
 
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),

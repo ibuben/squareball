@@ -31,6 +31,20 @@ export interface Message {
 }
 export interface MessageView { message: Message; body_html: string; body_text: string; blocked_images: number }
 
+export interface Identity {
+  id: number; name: string; email: string; reply_to: string; bcc: string; signature: string; is_default: boolean
+}
+export interface Condition { field: string; header?: string; op: string; value?: string }
+export interface Action { type: string; value?: string }
+export interface Rule { name: string; enabled: boolean; match: 'all' | 'any'; conditions: Condition[]; actions: Action[]; stop: boolean }
+export interface Vacation { enabled: boolean; subject: string; body: string; days: number; addresses?: string[]; start?: string; end?: string }
+export interface Forward { enabled: boolean; to: string; keep_copy: boolean }
+export interface Ruleset { rules: Rule[]; vacation: Vacation; forward: Forward }
+export interface SieveState {
+  mode: 'rules' | 'raw'; script_name: string; tag: string; ruleset?: Ruleset; raw: string; reason?: string
+  extensions: Record<string, boolean>
+}
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, public detail?: string) {
     super(detail || code)
@@ -90,4 +104,10 @@ export const api = {
   send: (form: FormData) => request<{ ok: boolean; warning?: string }>('POST', '/api/v1/send', form),
   saveDraft: (form: FormData) => request<{ ok: boolean; draft_ref: MsgRef }>('POST', '/api/v1/drafts', form),
   discardDraft: (ref: MsgRef) => request('POST', '/api/v1/drafts/discard', ref),
+  identities: () => request<{ identities: Identity[]; level: 'single' | 'domain' | 'any' }>('GET', '/api/v1/identities'),
+  saveIdentity: (i: Partial<Identity>) => request<Identity>('POST', '/api/v1/identities', i),
+  deleteIdentity: (id: number) => request('POST', '/api/v1/identities/delete', { id }),
+  sieve: () => request<SieveState>('GET', '/api/v1/sieve'),
+  putSieve: (body: { mode: 'rules' | 'raw'; tag: string; ruleset?: Ruleset; raw?: string }) =>
+    request<SieveState>('PUT', '/api/v1/sieve', body),
 }

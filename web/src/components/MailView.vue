@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CalendarDays, LogOut, Mail, Menu, Monitor, Moon, PanelRight, PenSquare, Settings, Sun, Users,
 } from 'lucide-vue-next'
 import { api } from '../api'
 import { t } from '../i18n'
 import FolderPane from './FolderPane.vue'
+// Настройки (с редактором подписи) — отдельный чанк, грузится при первом открытии.
+const SettingsView = defineAsyncComponent(() => import('./SettingsView.vue'))
 import MessageList from './MessageList.vue'
 import ReadingPane from './ReadingPane.vue'
 import ContactPane from './ContactPane.vue'
 import {
-  applyTheme, deleteSelected, loadFolders, loadList, openCompose, openFolder, openMessage, setMe, state,
+  applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, openCompose, openFolder, openMessage, setMe, state,
 } from '../store'
 
 const reading = ref<InstanceType<typeof ReadingPane>>()
@@ -39,7 +41,8 @@ function startResize(which: 'folders' | 'list', e: PointerEvent) {
 }
 
 const columns = computed(() =>
-  `52px ${widths.value.folders}px 1px ${widths.value.list}px 1px minmax(0,1fr)${state.showContact ? ' 260px' : ''}`)
+  `${widths.value.folders}px 1px ${widths.value.list}px 1px minmax(0,1fr)${state.showContact ? ' 260px' : ''}`)
+function go(view: 'mail' | 'settings') { state.view = view; menu.value = false; drawer.value = false }
 
 function toggleContact() {
   state.showContact = !state.showContact
@@ -109,6 +112,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onKey)
   await loadFolders()
   await openFolder(state.folders.find((f) => f.role === 'inbox')?.name ?? 'INBOX')
+  void loadIdentities()
   connectEvents()
   lastPoll = Date.now()
   timer = window.setInterval(() => {
@@ -144,19 +148,22 @@ onBeforeUnmount(() => {
           <button @click="setTheme('dark')"><Moon :size="15" /> {{ t('theme.dark') }}</button>
           <button @click="setTheme('system')"><Monitor :size="15" /> {{ t('theme.system') }}</button>
           <hr />
+          <button @click="go('settings')"><Settings :size="15" /> {{ t('nav.settings') }}</button>
           <button @click="logout"><LogOut :size="15" /> {{ t('menu.logout') }}</button>
         </div>
       </div>
     </header>
 
-    <div class="panes" :style="{ gridTemplateColumns: columns }">
-      <nav class="rail">
-        <button class="icon-btn active" :title="t('nav.mail')"><Mail :size="20" /></button>
-        <button class="icon-btn" :title="t('nav.contacts')" disabled><Users :size="20" /></button>
-        <button class="icon-btn" :title="t('nav.calendar')" disabled><CalendarDays :size="20" /></button>
-        <span class="spacer" />
-        <button class="icon-btn" :title="t('nav.settings')" disabled><Settings :size="20" /></button>
-      </nav>
+    <div class="main">
+    <nav class="rail">
+      <button class="icon-btn" :class="{ active: state.view === 'mail' }" :title="t('nav.mail')" :aria-label="t('nav.mail')" @click="go('mail')"><Mail :size="20" /></button>
+      <button class="icon-btn" :title="t('nav.contacts')" disabled><Users :size="20" /></button>
+      <button class="icon-btn" :title="t('nav.calendar')" disabled><CalendarDays :size="20" /></button>
+      <span class="spacer" />
+      <button class="icon-btn" :class="{ active: state.view === 'settings' }" :title="t('nav.settings')" :aria-label="t('nav.settings')" @click="go('settings')"><Settings :size="20" /></button>
+    </nav>
+    <SettingsView v-if="state.view === 'settings'" />
+    <div v-else class="panes" :style="{ gridTemplateColumns: columns }">
       <FolderPane class="p-folders" @click="drawer = false" />
       <div class="scrim" @click="drawer = false" />
       <div class="split" @pointerdown="startResize('folders', $event)" />
@@ -165,7 +172,8 @@ onBeforeUnmount(() => {
       <ReadingPane ref="reading" class="p-read" @back="state.current = null; state.currentUID = 0" />
       <ContactPane v-if="state.showContact" class="p-contact" />
     </div>
-    <button class="fab" :aria-label="t('compose.new')" @click="openCompose()"><PenSquare :size="22" /></button>
+    </div>
+    <button v-if="state.view === 'mail'" class="fab" :aria-label="t('compose.new')" @click="openCompose()"><PenSquare :size="22" /></button>
   </div>
 </template>
 
@@ -182,6 +190,8 @@ onBeforeUnmount(() => {
 .menu button:hover { background: var(--hover); }
 .menu hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
 .mlabel { padding: 4px 8px; font-size: 12px; }
+.main { display: grid; grid-template-columns: 52px minmax(0, 1fr); min-height: 0; }
+.main > * { min-height: 0; }
 .panes { display: grid; min-height: 0; }
 .panes > * { min-height: 0; }
 .rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; background: var(--pane); border-right: 1px solid var(--border); }
@@ -197,9 +207,10 @@ onBeforeUnmount(() => {
   border: 0; background: var(--accent); color: var(--accent-contrast); box-shadow: var(--shadow);
   align-items: center; justify-content: center;
 }
-@media (max-width: 1280px) { .p-contact, .contact-toggle { display: none; } .panes { grid-template-columns: 52px 200px 1px 340px 1px minmax(0,1fr) !important; } }
+@media (max-width: 1280px) { .p-contact, .contact-toggle { display: none; } .panes { grid-template-columns: 200px 1px 340px 1px minmax(0,1fr) !important; } }
 @media (max-width: 960px) {
-  .panes { grid-template-columns: 0 0 0 340px 1px minmax(0,1fr) !important; }
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .panes { grid-template-columns: 0 340px 1px minmax(0,1fr) !important; }
   .rail { display: none; }
   .burger { display: inline-flex; }
   .p-folders { position: fixed; z-index: 25; left: 0; top: 44px; bottom: 0; width: 260px; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }

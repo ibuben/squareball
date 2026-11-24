@@ -21,6 +21,7 @@ import (
 	"github.com/ibuben/squareball/internal/config"
 	"github.com/ibuben/squareball/internal/mail"
 	"github.com/ibuben/squareball/internal/session"
+	"github.com/ibuben/squareball/internal/store"
 )
 
 type Server struct {
@@ -29,6 +30,7 @@ type Server struct {
 	audit    *slog.Logger
 	sessions *session.Manager
 	pool     *mail.Pool
+	store    *store.Store
 	mux      *http.ServeMux
 	trusted  []*net.IPNet
 	secure   bool // public_url https → Secure cookie
@@ -51,16 +53,20 @@ type Options struct {
 	Logger        *slog.Logger
 	Audit         *slog.Logger
 	SessionSecret []byte
+	Store         *store.Store
 	Static        http.Handler // SPA
 }
 
 func New(o Options) (*Server, error) {
 	cfg := o.Config
 	s := &Server{
-		cfg: cfg, log: o.Logger, audit: o.Audit, mux: http.NewServeMux(),
+		cfg: cfg, log: o.Logger, audit: o.Audit, mux: http.NewServeMux(), store: o.Store,
 		loginIP:   newLimiter(cfg.Login.RateLimit.PerIP),
 		loginUser: newLimiter(cfg.Login.RateLimit.PerUser),
 		sendUser:  newLimiter(cfg.SMTP.RateLimit.PerUser),
+	}
+	if s.store == nil {
+		return nil, errors.New("api: store is required")
 	}
 	if s.audit == nil {
 		s.audit = s.log

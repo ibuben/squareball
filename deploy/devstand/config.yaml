@@ -20,3 +20,9 @@ login:
 log:
   format: text
   level: debug
+sieve:
+  enabled: true
+  host: 127.0.0.1
+  port: 4190
+  security: starttls
+  tls_verify: false

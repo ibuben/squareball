@@ -24,6 +24,7 @@ import (
 	"github.com/ibuben/squareball/internal/api"
 	"github.com/ibuben/squareball/internal/config"
 	"github.com/ibuben/squareball/internal/mail"
+	"github.com/ibuben/squareball/internal/store"
 	"github.com/ibuben/squareball/internal/web"
 )
 
@@ -168,7 +169,17 @@ func Run(ctx context.Context, cfgPath string, adapters ...ext.Adapter) error {
 	if err != nil {
 		return fmt.Errorf("session.secret_file: %w", err)
 	}
-	srv, err := api.New(api.Options{Config: cfg, Logger: log, Audit: audit, SessionSecret: secret, Static: web.Handler()})
+	dbPath, err := store.Path(cfg.Storage.DSNFile)
+	if err != nil {
+		return fmt.Errorf("storage: %w", err)
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	log.Info("storage", "driver", "sqlite", "path", dbPath)
+	srv, err := api.New(api.Options{Config: cfg, Logger: log, Audit: audit, SessionSecret: secret, Store: st, Static: web.Handler()})
 	if err != nil {
 		return err
 	}
