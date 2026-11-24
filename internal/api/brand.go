@@ -44,7 +44,7 @@ func loadBrandAssets(b *config.Brand) (map[string]brandAsset, error) {
 // configBrand — оформление из ui.brand; файлы превращаются в ссылки /brand/<name>.
 func (s *Server) configBrand() ext.Brand {
 	ub := &s.cfg.UI.Brand
-	b := ext.Brand{Name: ub.Name, Accent: ub.Accent, AccentDark: ub.AccentDark, CSSVars: ub.CSSVars}
+	b := ext.Brand{Name: ub.Name, Accent: ub.Accent, AccentDark: ub.AccentDark, CSSVars: ub.CSSVars, HideAbout: ub.HideAbout}
 	urls := []*string{&b.LogoURL, &b.LogoDarkURL, &b.FaviconURL}
 	for i, a := range ub.Assets() {
 		*urls[i] = a.URL
@@ -82,6 +82,7 @@ func (s *Server) brandFor(r *http.Request) ext.Brand {
 	set(&b.FaviconURL, p.FaviconURL, config.ValidBrandURL)
 	set(&b.Accent, p.Accent, config.ValidHexColor)
 	set(&b.AccentDark, p.AccentDark, config.ValidHexColor)
+	b.HideAbout = b.HideAbout || p.HideAbout
 	if len(p.CSSVars) > 0 {
 		vars := make(map[string]string, len(b.CSSVars)+len(p.CSSVars))
 		for k, v := range b.CSSVars {

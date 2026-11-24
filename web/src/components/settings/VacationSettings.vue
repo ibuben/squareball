@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import type { Forward, Vacation } from '../../api'
 import { cloneRuleset, loadSieve, saveSieve, sieve } from '../../sieve'
+import { t } from '../../i18n'
 
 // Один компонент на два раздела: автоответ и пересылка — части того же скрипта.
 const props = defineProps<{ kind: 'vacation' | 'forward' }>()
@@ -28,39 +29,39 @@ async function save() {
 
 <template>
   <section>
-    <h2>{{ kind === 'vacation' ? 'Автоответ' : 'Пересылка' }}</h2>
-    <p v-if="sieve.disabled" class="muted">На сервере не включён ManageSieve — {{ kind === 'vacation' ? 'автоответ' : 'пересылка' }} недоступны.</p>
+    <h2>{{ t(kind === 'vacation' ? 'set.vacation' : 'set.forward') }}</h2>
+    <p v-if="sieve.disabled" class="muted">{{ t(kind === 'vacation' ? 'vac.noSieveVacation' : 'vac.noSieveForward') }}</p>
     <p v-else-if="sieve.error" class="error">{{ sieve.error }}</p>
     <p v-else-if="sieve.state?.mode === 'raw'" class="muted">
-      Фильтры открыты как текст (раздел «Фильтры»), поэтому эту настройку нельзя изменить формой.
+      {{ t('vac.rawMode') }}
     </p>
 
     <form v-else-if="kind === 'vacation' && vacation" class="card" @submit.prevent="save">
-      <p class="muted">Сервер ответит отправителю один раз за указанное число дней, даже когда почта закрыта.</p>
-      <label class="check"><input v-model="vacation.enabled" type="checkbox" data-test="vacation-enabled" /> Автоответ включён</label>
+      <p class="muted">{{ t('vac.hint') }}</p>
+      <label class="check"><input v-model="vacation.enabled" type="checkbox" data-test="vacation-enabled" /> {{ t('vac.enabled') }}</label>
       <div class="line">
-        <label>С <input v-model="vacation.start" class="input" type="date" /></label>
-        <label>по <input v-model="vacation.end" class="input" type="date" /></label>
+        <label>{{ t('vac.from') }} <input v-model="vacation.start" class="input" type="date" /></label>
+        <label>{{ t('vac.to') }} <input v-model="vacation.end" class="input" type="date" /></label>
       </div>
-      <label>Тема <input v-model="vacation.subject" class="input" placeholder="Я в отпуске" /></label>
-      <label>Текст ответа
+      <label>{{ t('vac.subject') }} <input v-model="vacation.subject" class="input" :placeholder="t('vac.subjectPh')" /></label>
+      <label>{{ t('vac.body') }}
         <textarea v-model="vacation.body" class="input area" rows="6" :required="vacation.enabled"
-                  placeholder="Здравствуйте! Я в отпуске до 10 декабря. По срочным вопросам пишите коллегам." />
+                  :placeholder="t('vac.bodyPh')" />
       </label>
-      <label>Отвечать одному отправителю не чаще, чем раз в
-        <input v-model.number="vacation.days" class="input days" type="number" min="1" max="365" /> дн.
+      <label>{{ t('vac.every') }}
+        <input v-model.number="vacation.days" class="input days" type="number" min="1" max="365" /> {{ t('vac.days') }}
       </label>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
-      <div class="actions"><button class="btn primary" :disabled="sieve.saving">Сохранить</button></div>
+      <div class="actions"><button class="btn primary" :disabled="sieve.saving">{{ t('common.save') }}</button></div>
     </form>
 
     <form v-else-if="kind === 'forward' && forward" class="card" @submit.prevent="save">
-      <p class="muted">Все входящие письма будут пересылаться на указанный адрес.</p>
-      <label class="check"><input v-model="forward.enabled" type="checkbox" /> Пересылка включена</label>
-      <label>Адрес <input v-model="forward.to" class="input" type="email" :required="forward.enabled" placeholder="name@example.com" /></label>
-      <label class="check"><input v-model="forward.keep_copy" type="checkbox" /> Оставлять копию в этом ящике</label>
+      <p class="muted">{{ t('fwd.hint') }}</p>
+      <label class="check"><input v-model="forward.enabled" type="checkbox" /> {{ t('fwd.enabled') }}</label>
+      <label>{{ t('fwd.address') }} <input v-model="forward.to" class="input" type="email" :required="forward.enabled" placeholder="name@example.com" /></label>
+      <label class="check"><input v-model="forward.keep_copy" type="checkbox" /> {{ t('fwd.keepCopy') }}</label>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
-      <div class="actions"><button class="btn primary" :disabled="sieve.saving">Сохранить</button></div>
+      <div class="actions"><button class="btn primary" :disabled="sieve.saving">{{ t('common.save') }}</button></div>
     </form>
   </section>
 </template>

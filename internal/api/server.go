@@ -27,6 +27,7 @@ import (
 )
 
 type Server struct {
+	version  string
 	cfg      *config.Config
 	log      *slog.Logger
 	audit    *slog.Logger
@@ -73,12 +74,13 @@ type Options struct {
 	SessionSecret []byte
 	Store         *store.Store
 	Static        http.Handler // SPA
+	Version       string       // версия сборки — в окне «О программе»
 }
 
 func New(o Options) (*Server, error) {
 	cfg := o.Config
 	s := &Server{
-		cfg: cfg, log: o.Logger, audit: o.Audit, mux: http.NewServeMux(), store: o.Store,
+		cfg: cfg, log: o.Logger, audit: o.Audit, mux: http.NewServeMux(), store: o.Store, version: o.Version,
 		loginIP:   newLimiter(cfg.Login.RateLimit.PerIP),
 		loginUser: newLimiter(cfg.Login.RateLimit.PerUser),
 		sendUser:  newLimiter(cfg.SMTP.RateLimit.PerUser),
@@ -166,11 +168,20 @@ func (s *Server) SetBrandProvider(bp ext.BrandProvider) {
 }
 
 func (s *Server) StartSession(w http.ResponseWriter, r *http.Request, g ext.SessionGrant) error {
-	if g.AuthMode == ext.AuthImpersonation {
-		im := s.cfg.IMAP.Impersonation
-		if !im.Enabled || !contains(im.AllowedSources, g.Source) {
-			return fmt.Errorf("impersonation is not allowed for source %q", g.Source)
-		}
+	if g.Source == "" || g.Source == session.SourcePassword {
+		return fmt.Errorf("session source %q is reserved", g.Source)
+	}
+	if g.AuthMode != ext.AuthImpersonation {
+		// Пароля у handoff нет, а сессия без пароля и без мастер-учётки не войдёт в IMAP.
+		return fmt.Errorf("auth mode %d is not supported for handoff", g.AuthMode)
+	}
+	mb, err := s.loginName(g.Mailbox)
+	if err != nil || !strings.Contains(g.Mailbox, "@") {
+		return fmt.Errorf("mailbox %q is not allowed", g.Mailbox)
+	}
+	g.Mailbox = mb
+	if im := s.cfg.IMAP.Impersonation; !im.Enabled || !contains(im.AllowedSources, g.Source) {
+		return fmt.Errorf("impersonation is not allowed for source %q", g.Source)
 	}
 	ip := s.ClientIP(r)
 	sess, cookie, err := s.sessions.Create(g.Mailbox, "", g.AuthMode, g.Source, ip, r.UserAgent())
@@ -185,6 +196,31 @@ func (s *Server) StartSession(w http.ResponseWriter, r *http.Request, g ext.Sess
 	s.pool.Adopt(sess.ID, c)
 	s.setCookie(w, cookie)
 	s.audit.Info("login", "mailbox", g.Mailbox, "source", g.Source, "mode", "impersonation", "ip", ip)
+	return nil
+}
+
+func (s *Server) EndSessions(mailbox string) int {
+	mb, err := s.loginName(mailbox)
+	if err != nil {
+		return 0
+	}
+	n := s.sessions.DeleteMailbox(mb, "")
+	if n > 0 {
+		s.audit.Info("sessions ended", "mailbox", mb, "count", n, "by", "adapter")
+	}
+	return n
+}
+
+func (s *Server) DeleteMailboxData(ctx context.Context, mailbox string) error {
+	mb, err := s.loginName(mailbox)
+	if err != nil {
+		return fmt.Errorf("mailbox %q is not allowed", mailbox)
+	}
+	s.sessions.DeleteMailbox(mb, "")
+	if err := s.store.DeleteMailbox(ctx, mb); err != nil {
+		return err
+	}
+	s.audit.Info("mailbox data deleted", "mailbox", mb, "by", "adapter")
 	return nil
 }
 

@@ -79,3 +79,23 @@ func TestBrandFromConfigAndProvider(t *testing.T) {
 		t.Errorf("merged brand: %+v", b)
 	}
 }
+
+func TestBrandHideAbout(t *testing.T) {
+	c := testConfig(t)
+	s := newServer(t, c)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	if getBrand(t, ts.URL).HideAbout {
+		t.Fatal("about hidden by default")
+	}
+	// Провайдер может скрыть окно «О программе», но не вернуть скрытое конфигом.
+	s.SetBrandProvider(fakeBrand{ext.Brand{HideAbout: true}})
+	if !getBrand(t, ts.URL).HideAbout {
+		t.Error("provider hide_about ignored")
+	}
+	c.UI.Brand.HideAbout = true
+	s.SetBrandProvider(fakeBrand{ext.Brand{Name: "X"}})
+	if !getBrand(t, ts.URL).HideAbout {
+		t.Error("config hide_about ignored")
+	}
+}

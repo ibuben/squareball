@@ -127,8 +127,8 @@ function onSearch() {
         <h2 class="ellipsis">{{ folderTitle(currentFolder()) }}</h2>
         <span class="faint">{{ state.total }}</span>
         <button class="threads" :class="{ on: threads }" role="switch" :aria-checked="threads" data-test="threads-switch"
-                title="Группировать письма в цепочки" @click="setThreads(!threads)">
-          <MessagesSquare :size="15" /> <span>Цепочки</span>
+                :title="t('list.threadsTitle')" @click="setThreads(!threads)">
+          <MessagesSquare :size="15" /> <span>{{ t('list.threads') }}</span>
         </button>
       </div>
       <label class="search">
@@ -175,12 +175,12 @@ function onSearch() {
             </div>
             <div class="row2">
               <button v-if="head" class="thread-toggle" :class="{ open: !collapsed }" data-test="thread-toggle"
-                      :aria-expanded="!collapsed" :title="collapsed ? 'Показать цепочку' : 'Свернуть цепочку'"
+                      :aria-expanded="!collapsed" :title="collapsed ? t('list.expandThread') : t('list.collapseThread')"
                       @click.stop="toggleThread(head)">
                 <component :is="collapsed ? ChevronRight : ChevronDown" :size="13" />
-                {{ size }}<template v-if="unreadIn({ m, head, collapsed, size })"> · {{ unreadIn({ m, head, collapsed, size }) }} нов.</template>
+                {{ size }}<template v-if="unreadIn({ m, head, collapsed, size })"> · {{ t('list.newCount', { n: unreadIn({ m, head, collapsed, size }) }) }}</template>
               </button>
-              <span v-if="m.priority === 1" class="prio" title="Высокая важность">!</span>
+              <span v-if="m.priority === 1" class="prio" :title="t('msg.highPriority')">!</span>
               <span class="subject ellipsis">{{ m.subject || t('list.nosubject') }}</span>
               <Flag v-if="any({ m, head, collapsed, size }, (x) => x.flagged)" :size="13" class="flag" />
             </div>

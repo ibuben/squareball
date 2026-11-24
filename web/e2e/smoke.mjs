@@ -1,9 +1,10 @@
 // Сквозной smoke-тест против живого стенда (deploy/devstand).
 // Запуск: BASE=http://127.0.0.1:8080 node e2e/smoke.mjs
 // Переменные: CHROMIUM (путь к браузеру), SHOTS (каталог для скриншотов),
-// USER1/USER2/PASS — учётки стенда.
+// USER1/USER2/PASS — учётки стенда, PANEL_KEY — ключ SSO адаптера panel.
 import { chromium, request } from 'playwright-core'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { createHmac, randomUUID } from 'node:crypto'
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8080'
 const SHOTS = process.env.SHOTS ?? 'e2e/out'
@@ -15,6 +16,8 @@ mkdirSync(SHOTS, { recursive: true })
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? '/usr/bin/chromium', args: ['--no-sandbox'] })
 const errors = []
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 860 }, locale: 'ru-RU' })
+// Основной сценарий проверяет русские надписи; язык по умолчанию — английский (см. checkLanguage).
+await ctx.addInitScript(() => { if (!localStorage.getItem('wm.lang')) localStorage.setItem('wm.lang', 'ru') })
 const page = await ctx.newPage()
 page.on('pageerror', (e) => errors.push(e.message))
 // 401 до входа и при неверном пароле — ожидаемые ответы API, не ошибки.
@@ -57,9 +60,74 @@ async function sendAs(subjects, withAttachment = false) {
 }
 const seed = () => sendAs(['Письмо для e2e №1', 'Письмо для e2e №2', 'Письмо для e2e №3'], true)
 
+// USER2 приглашает USER1 на встречу: письмо с вложением invite.ics (METHOD:REQUEST).
+async function sendInvite(summary) {
+  const api = await request.newContext({ baseURL: BASE, extraHTTPHeaders: { Origin: BASE } })
+  const login = await api.post('/api/v1/auth/login', { data: { username: USER2, password: PASS } })
+  if (!login.ok()) throw new Error(`invite login: ${login.status()}`)
+  const { csrf } = await login.json()
+  const to = USER1.includes('@') ? USER1 : `${USER1}@test.local`
+  const from = USER2.includes('@') ? USER2 : `${USER2}@test.local`
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//e2e//RU', 'METHOD:REQUEST', 'BEGIN:VEVENT',
+    `UID:e2e-${Date.now()}@test.local`, 'SEQUENCE:0', 'DTSTAMP:20261124T080000Z',
+    'DTSTART;TZID=Asia/Tashkent:20261201T100000', 'DTEND;TZID=Asia/Tashkent:20261201T110000',
+    `SUMMARY:${summary}`, 'LOCATION:Переговорная 3', 'URL:https://meet.example.com/e2e',
+    `ORGANIZER;CN=Алиса:mailto:${from}`,
+    `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${to}`,
+    'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=Кэрол:mailto:carol@test.local',
+    'ATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=DECLINED;CN=Дэйв:mailto:dave@test.local',
+    'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n')
+  const r = await api.post('/api/v1/send', {
+    headers: { 'X-CSRF-Token': csrf },
+    multipart: {
+      draft: JSON.stringify({ to: [{ email: to }], subject: `Приглашение: ${summary}`, html: '<p>Обсудим итоги недели.</p>' }),
+      attachments: { name: 'invite.ics', mimeType: 'text/calendar', buffer: Buffer.from(ics) },
+    },
+  })
+  if (!r.ok()) throw new Error(`invite send: ${r.status()} ${await r.text()}`)
+  return { api, csrf }
+}
+
+// Экран входа: английский по умолчанию, выбор языка запоминается, переключатель темы по кругу.
+async function checkLanguage() {
+  const c = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const p = await c.newPage()
+  await p.goto(BASE)
+  await p.getByRole('button', { name: 'Sign in' }).waitFor()
+  await p.locator('[data-test=login-lang]').selectOption('ru')
+  await p.getByRole('button', { name: 'Войти' }).waitFor()
+  await p.reload()
+  await p.getByRole('button', { name: 'Войти' }).waitFor()
+  if (await p.evaluate(() => document.documentElement.lang) !== 'ru') throw new Error('lang не ru после выбора')
+  await p.locator('[data-test=login-lang]').selectOption('en')
+  await p.getByRole('button', { name: 'Sign in' }).waitFor()
+  const toggle = p.locator('[data-test=theme-toggle]')
+  const seen = []
+  for (let i = 0; i < 3; i++) {
+    await toggle.click()
+    seen.push(`${await toggle.getAttribute('data-theme-mode')}/${await p.evaluate(() => document.documentElement.dataset.theme)}`)
+  }
+  if (!seen[0].startsWith('light/light') || !seen[1].startsWith('dark/dark') || !seen[2].startsWith('system/')) throw new Error(`переключатель темы: ${seen}`)
+  await p.screenshot({ path: `${SHOTS}/00-login-en.png` })
+  // После входа: тема — на левой панели, «О программе» — под настройками.
+  await p.locator('input[autocomplete=username]').fill(USER1)
+  await p.locator('input[type=password]').fill(PASS)
+  await p.getByRole('button', { name: 'Sign in' }).click()
+  await p.locator('.rail [data-test=theme-toggle]').waitFor()
+  if (await p.locator('.menu').getByText('Theme').count()) throw new Error('тема осталась в меню')
+  await p.locator('.rail [data-test=about]').click()
+  await p.locator('[data-test=about-dialog]').getByText('eXUnity LAB').waitFor()
+  await p.screenshot({ path: `${SHOTS}/00-about.png` })
+  await p.keyboard.press('Escape')
+  await p.locator('[data-test=about-dialog]').waitFor({ state: 'detached' })
+  await c.close()
+}
+
 try {
   await seed()
   step('тестовые письма отправлены через API')
+  await checkLanguage()
+  step('английский по умолчанию, выбор языка и темы на входе, «О программе»')
   await page.goto(BASE)
   await page.getByRole('button', { name: 'Войти' }).waitFor()
   await shot('01-login')
@@ -663,6 +731,71 @@ try {
   await page.locator(`.row[data-template="${tplName}"]`).getByRole('button', { name: 'Удалить' }).click()
   await page.locator(`.row[data-template="${tplName}"]`).waitFor({ state: 'detached' })
   await page.getByRole('button', { name: 'Почта' }).first().click()
+
+  {
+    const summary = `Планёрка e2e ${Date.now()}`
+    const org = await sendInvite(summary)
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
+      page.locator('.folder', { hasText: 'Входящие' }).click(),
+    ])
+    await page.locator('.item', { hasText: summary }).first().click()
+    const card = page.locator('[data-test=invite-card]')
+    await card.waitFor()
+    for (const want of [summary, 'Приглашение на встречу', 'Переговорная 3', 'Алиса', 'приняли: 1', 'Кэрол']) {
+      if (!(await card.textContent()).includes(want)) throw new Error(`в карточке нет «${want}»`)
+    }
+    await shot('24-invite')
+    await card.locator('[data-test=rsvp-accept]').click()
+    await page.getByText('ответ отправлен').waitFor()
+    await card.locator('[data-test=rsvp-accept].on').waitFor()
+    await card.getByText('Вы ответили: Принято').waitFor()
+    await card.getByText('приняли: 2').waitFor() // свой ответ учтён в списке участников
+    // Ответ METHOD:REPLY пришёл организатору.
+    let got = false
+    for (let i = 0; i < 50 && !got; i++) {
+      const r = await org.api.get(`/api/v1/messages?folder=INBOX&q=${encodeURIComponent('Принято: ' + summary)}`)
+      got = (await r.json()).messages.length > 0
+      if (!got) await page.waitForTimeout(200)
+    }
+    await org.api.post('/api/v1/auth/logout', { headers: { 'X-CSRF-Token': org.csrf } })
+    await org.api.dispose()
+    if (!got) throw new Error('ответ на приглашение не дошёл организатору')
+    await shot('25-invite-accepted')
+    step('приглашение: карточка встречи, «Принять», ответ REPLY у организатора')
+  }
+
+  // Вход из панели по подписанной одноразовой ссылке (adapters.panel), если он включён.
+  const panelKey = process.env.PANEL_KEY ?? '../deploy/devstand/panel-sso.key'
+  if (existsSync(panelKey)) {
+    const key = readFileSync(panelKey, 'utf8').trim()
+    const mailbox = USER1.includes('@') ? USER1 : `${USER1}@test.local`
+    const payload = 'v1.' + Buffer.from(JSON.stringify({ sub: mailbox, exp: Math.floor(Date.now() / 1000) + 60, jti: randomUUID() })).toString('base64url')
+    const link = `${BASE}/sso/panel?token=${payload}.${createHmac('sha256', key).update(payload).digest('base64url')}`
+    const sso = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'ru-RU' })
+    await sso.addInitScript(() => localStorage.setItem('wm.lang', 'ru'))
+    const sp = await sso.newPage()
+    sp.on('pageerror', (e) => errors.push('sso: ' + e.message))
+    await sp.goto(link)
+    if (!sp.url().includes('/sso/panel')) { // адаптер выключен — ссылку обработает SPA
+      await sp.locator('.item').first().waitFor()
+      await sp.getByRole('button', { name: 'Настройки' }).first().click()
+      await sp.locator('.nav .item').first().waitFor()
+      if (await sp.locator('.nav .item', { hasText: 'Пароль' }).isVisible()) {
+        await sp.locator('.nav .item', { hasText: 'Пароль' }).click()
+        await sp.locator('[data-test=pw-sso]').waitFor()
+        if (await sp.locator('[data-test=pw-current]').count()) throw new Error('после входа из панели спрашивают текущий пароль')
+      }
+      await sp.screenshot({ path: `${SHOTS}/26-panel-sso.png` })
+      // Повтор той же ссылки не пускает.
+      const again = await (await browser.newContext()).newPage()
+      const res = await again.goto(link)
+      if (res.status() !== 403) throw new Error(`повтор ссылки входа: HTTP ${res.status()}`)
+      await again.context().close()
+      step('вход из панели по одноразовой ссылке, смена пароля без текущего')
+    }
+    await sso.close()
+  }
 
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),

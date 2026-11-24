@@ -3,6 +3,7 @@
 import { reactive } from 'vue'
 import { api, ApiError, type Ruleset, type SieveState } from './api'
 import { toast } from './store'
+import { t } from './i18n'
 
 export const sieve = reactive({
   loading: false,
@@ -46,12 +47,12 @@ export async function saveSieve(body: { ruleset?: Ruleset; raw?: string }): Prom
       tag: sieve.state.tag,
       ruleset: body.ruleset, raw: body.raw,
     })
-    toast('Сохранено')
+    toast(t('toast.saved'))
     return ''
   } catch (e) {
     if (e instanceof ApiError && e.code === 'sieve.conflict') {
       await loadSieve(true)
-      return 'Фильтры изменились в другом месте (например, в Roundcube). Загружена актуальная версия — повторите изменения.'
+      return t('sieve.conflict')
     }
     return e instanceof ApiError ? e.detail || e.code : String(e)
   } finally {

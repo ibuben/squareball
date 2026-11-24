@@ -4,6 +4,7 @@ import { Users, X } from 'lucide-vue-next'
 import { api, type Address, type Suggestion } from '../api'
 import { isEmail, parseAddresses, who } from '../format'
 import { state } from '../store'
+import { t } from '../i18n'
 
 const model = defineModel<Address[]>({ required: true })
 defineProps<{ label: string }>()
@@ -101,11 +102,11 @@ function remove(i: number) { model.value = model.value.filter((_, j) => j !== i)
           @mousedown.prevent="pick(s)" @mouseenter="active = i">
         <template v-if="s.kind === 'group'">
           <Users :size="14" class="faint" /> <strong>{{ s.name }}</strong>
-          <span class="faint">группа · {{ s.members?.length }}</span>
+          <span class="faint">{{ t('addr.group', { n: s.members?.length ?? 0 }) }}</span>
         </template>
         <template v-else>
           <strong>{{ s.name || s.email }}</strong> <span class="faint">{{ s.name ? s.email : '' }}</span>
-          <span v-if="s.kind === 'contact'" class="tag">контакт</span>
+          <span v-if="s.kind === 'contact'" class="tag">{{ t('addr.contact') }}</span>
         </template>
       </li>
     </ul>

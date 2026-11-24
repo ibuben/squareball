@@ -39,7 +39,7 @@ async function addToBook() {
   try {
     await api.saveContact({ name: p.name ?? '', emails: [{ value: p.email, label: 'work' }] })
     inBook.value = true
-    toast('Добавлено в контакты')
+    toast(t('contact.added'))
   } catch (e) { reportError(e) }
 }
 </script>
@@ -53,8 +53,8 @@ async function addToBook() {
         <div class="faint email">{{ person.email }}</div>
         <div class="btns">
           <button class="btn" @click="openCompose({ to: [person] })"><PenSquare :size="14" /> {{ t('compose.new') }}</button>
-          <button v-if="inBook === false" class="btn" @click="addToBook"><UserPlus :size="14" /> В контакты</button>
-          <span v-else-if="inBook" class="faint in-book"><Check :size="14" /> в контактах</span>
+          <button v-if="inBook === false" class="btn" @click="addToBook"><UserPlus :size="14" /> {{ t('contact.add') }}</button>
+          <span v-else-if="inBook" class="faint in-book"><Check :size="14" /> {{ t('contact.inBook') }}</span>
         </div>
       </div>
       <div class="section">{{ t('contact.history') }}</div>

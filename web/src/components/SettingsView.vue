@@ -3,7 +3,8 @@ import { ref } from 'vue'
 import {
   BookOpen, FileText, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, SpellCheck, UserRound,
 } from 'lucide-vue-next'
-import { applyTheme, loadPrefs, savePrefs, state } from '../store'
+import { loadPrefs, savePrefs, setTheme, state } from '../store'
+import { availableLangs, lang, LANGS, setLang, t, type Key, type Lang } from '../i18n'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
 import VacationSettings from './settings/VacationSettings.vue'
@@ -13,17 +14,17 @@ import TemplatesSettings from './settings/TemplatesSettings.vue'
 import SpellSettings from './settings/SpellSettings.vue'
 
 type Section = 'identities' | 'templates' | 'spell' | 'reading' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
-const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean; spell?: boolean }[] = [
-  { id: 'identities', label: 'Отправители и подписи', icon: UserRound },
-  { id: 'templates', label: 'Шаблоны ответов', icon: FileText },
-  { id: 'spell', label: 'Орфография', icon: SpellCheck, spell: true },
-  { id: 'reading', label: 'Чтение писем', icon: BookOpen },
-  { id: 'folders', label: 'Папки', icon: FolderTree },
-  { id: 'filters', label: 'Фильтры', icon: Filter, sieve: true },
-  { id: 'vacation', label: 'Автоответ', icon: Palmtree, sieve: true },
-  { id: 'forward', label: 'Пересылка', icon: Forward, sieve: true },
-  { id: 'password', label: 'Пароль', icon: KeyRound, password: true },
-  { id: 'appearance', label: 'Внешний вид', icon: Palette },
+const sections: { id: Section; label: Key; icon: unknown; sieve?: boolean; password?: boolean; spell?: boolean }[] = [
+  { id: 'identities', label: 'set.identities', icon: UserRound },
+  { id: 'templates', label: 'set.templates', icon: FileText },
+  { id: 'spell', label: 'set.spell', icon: SpellCheck, spell: true },
+  { id: 'reading', label: 'set.reading', icon: BookOpen },
+  { id: 'folders', label: 'set.folders', icon: FolderTree },
+  { id: 'filters', label: 'set.filters', icon: Filter, sieve: true },
+  { id: 'vacation', label: 'set.vacation', icon: Palmtree, sieve: true },
+  { id: 'forward', label: 'set.forward', icon: Forward, sieve: true },
+  { id: 'password', label: 'set.password', icon: KeyRound, password: true },
+  { id: 'appearance', label: 'set.appearance', icon: Palette },
 ]
 const current = ref<Section>((sessionStorage.getItem('wm.settings') as Section) || 'identities')
 function open(s: Section) {
@@ -31,22 +32,22 @@ function open(s: Section) {
   try { sessionStorage.setItem('wm.settings', s) } catch { /* ignore */ }
 }
 const mdnModes = [
-  { v: '' as const, label: 'Спрашивать' },
-  { v: 'always' as const, label: 'Отправлять, если адрес совпадает с адресом отправителя (иначе спрашивать)' },
-  { v: 'never' as const, label: 'Никогда не отправлять и не спрашивать' },
+  { v: '' as const, label: 'set.mdnAsk' as Key },
+  { v: 'always' as const, label: 'set.mdnAlways' as Key },
+  { v: 'never' as const, label: 'set.mdnNever' as Key },
 ]
 void loadPrefs()
-function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyTheme() }
+const langs = () => availableLangs(state.config?.languages)
 </script>
 
 <template>
   <div class="settings">
-    <nav class="nav" aria-label="Настройки">
-      <h1>Настройки</h1>
+    <nav class="nav" :aria-label="t('nav.settings')">
+      <h1>{{ t('nav.settings') }}</h1>
       <button v-for="s in sections" :key="s.id" class="item" :class="{ on: current === s.id }"
               v-show="(!s.sieve || state.me?.features.sieve) && (!s.password || state.me?.features.password_change)
                 && (!s.spell || state.me?.features.spellcheck?.engine !== 'off')" @click="open(s.id)">
-        <component :is="s.icon" :size="16" /> {{ s.label }}
+        <component :is="s.icon" :size="16" /> {{ t(s.label) }}
       </button>
     </nav>
     <div class="content scroll">
@@ -54,12 +55,12 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
       <TemplatesSettings v-else-if="current === 'templates'" />
       <SpellSettings v-else-if="current === 'spell'" />
       <section v-else-if="current === 'reading'">
-        <h2>Чтение писем</h2>
+        <h2>{{ t('set.reading') }}</h2>
         <div class="card">
-          <p class="faint" style="margin:0">Что делать, если отправитель просит уведомить о прочтении письма:</p>
+          <p class="faint" style="margin:0">{{ t('set.mdnHint') }}</p>
           <label v-for="o in mdnModes" :key="o.v" class="check">
             <input type="radio" name="mdn" :value="o.v" :checked="state.prefs.mdn_mode === o.v" data-test="mdn-mode"
-                   @change="savePrefs({ mdn_mode: o.v })" /> {{ o.label }}
+                   @change="savePrefs({ mdn_mode: o.v })" /> {{ t(o.label) }}
           </label>
         </div>
       </section>
@@ -69,11 +70,16 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
       <VacationSettings v-else-if="current === 'forward'" kind="forward" />
       <PasswordSettings v-else-if="current === 'password'" />
       <section v-else>
-        <h2>Внешний вид</h2>
+        <h2>{{ t('set.appearance') }}</h2>
         <div class="card">
-          <label class="check"><input type="radio" value="light" :checked="state.theme === 'light'" @change="setTheme('light')" /> Светлая тема</label>
-          <label class="check"><input type="radio" value="dark" :checked="state.theme === 'dark'" @change="setTheme('dark')" /> Тёмная тема</label>
-          <label class="check"><input type="radio" value="system" :checked="state.theme === 'system'" @change="setTheme('system')" /> Как в системе</label>
+          <label class="check"><input type="radio" value="light" :checked="state.theme === 'light'" @change="setTheme('light')" /> {{ t('set.themeLight') }}</label>
+          <label class="check"><input type="radio" value="dark" :checked="state.theme === 'dark'" @change="setTheme('dark')" /> {{ t('set.themeDark') }}</label>
+          <label class="check"><input type="radio" value="system" :checked="state.theme === 'system'" @change="setTheme('system')" /> {{ t('theme.system') }}</label>
+          <label v-if="langs().length > 1" class="lang">{{ t('login.language') }}
+            <select class="input" :value="lang()" data-test="settings-lang" @change="setLang(($event.target as HTMLSelectElement).value as Lang)">
+              <option v-for="l in langs()" :key="l" :value="l">{{ LANGS[l] }}</option>
+            </select>
+          </label>
         </div>
       </section>
     </div>
@@ -94,6 +100,7 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
 .content :deep(label) { display: grid; gap: 6px; color: var(--text-2); }
 .content :deep(label.check) { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .content :deep(.actions) { display: flex; gap: 8px; flex-wrap: wrap; }
+.lang { max-width: 260px; margin-top: 6px; }
 .content :deep(.error) { color: var(--danger); margin: 0; white-space: pre-wrap; }
 @media (max-width: 760px) {
   .settings { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }

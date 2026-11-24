@@ -250,6 +250,8 @@ type Message struct {
 	MDNTo       string       `json:"mdn_to,omitempty"` // Disposition-Notification-To
 	ReturnPath  string       `json:"-"`
 	DSN         bool         `json:"dsn,omitempty"` // только у черновиков
+	Invite      *Invite      `json:"invite,omitempty"`
+	InviteICS   []byte       `json:"-"` // исходный iCalendar приглашения — для ответа
 }
 
 func fetchRaw(c *imapclient.Client, folder string, uid imap.UID) ([]byte, []imap.Flag, error) {
@@ -360,6 +362,12 @@ func GetMessage(c *imapclient.Client, folder string, uid uint32, markSeen bool) 
 			return false, nil
 		}
 		att.Size = len(data)
+		if m.Invite == nil && len(data) <= 1<<20 && isCalendarPart(ctype, att.Filename) {
+			if inv, err := ParseInvite(data); err == nil {
+				inv.Part = att.Index
+				m.Invite, m.InviteICS = inv, data
+			}
+		}
 		if att.Filename == "" {
 			att.Filename = defaultName(att)
 		}
@@ -389,6 +397,9 @@ func GetMessage(c *imapclient.Client, folder string, uid uint32, markSeen bool) 
 		}
 		m.ReturnPath = strings.Trim(strings.TrimSpace(hdr.Get("Return-Path")), "<>")
 		m.DSN = hdr.Get("X-Webmail-DSN") == "1"
+	}
+	if m.Invite != nil && m.Text == "" && m.HTML == "" {
+		m.Text = m.Invite.Description // письмо из одного календаря: показываем описание события
 	}
 	if markSeen && !hasFlag(flags, imap.FlagSeen) {
 		err := c.Store(imap.UIDSetNum(imap.UID(uid)), &imap.StoreFlags{

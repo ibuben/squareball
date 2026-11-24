@@ -22,7 +22,7 @@ test:
 
 # Интеграционные тесты против локального стенда (make devstand).
 test-it:
-	WEBMAIL_IT=1 go test ./internal/api/ -run Integration -v
+	WEBMAIL_IT=1 go test ./internal/api/ ./adapters/... -run Integration -v
 
 e2e:
 	cd web && node e2e/smoke.mjs

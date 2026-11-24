@@ -48,6 +48,13 @@ type Core interface {
 	// Учётки, кэш контактов и синхронизацию ведёт ядро; источник отвечает
 	// только за протокол. Один источник на установку.
 	SetContactSource(cs ContactSource)
+	// EndSessions завершает все сессии ящика: например, панель сменила
+	// пароль или заблокировала ящик. Возвращает число завершённых сессий.
+	EndSessions(mailbox string) int
+	// DeleteMailboxData завершает сессии ящика и удаляет всё, что ядро о нём
+	// хранит (отправители, контакты, настройки, шаблоны, словарь, учётки
+	// внешних книг). Письма на IMAP-сервере не трогает.
+	DeleteMailboxData(ctx context.Context, mailbox string) error
 }
 
 // AuthMode — способ, которым ядро аутентифицируется в IMAP/SMTP для сессии.
@@ -63,7 +70,7 @@ const (
 
 // SessionGrant — результат проверенного handoff.
 type SessionGrant struct {
-	Mailbox  string // local@domain
+	Mailbox  string // local@domain; ядро приводит его к виду, как при обычном входе
 	AuthMode AuthMode
 	Source   string // например "webbeard_sso" — для аудита и allowed_sources
 }
@@ -73,7 +80,7 @@ type PasswordChange struct {
 	Mailbox  string
 	Current  string // пусто, если SSOSkip
 	New      string
-	SSOSkip  bool   // SSO-сессия в окне password_window: текущий не проверяется
+	SSOSkip  bool   // SSO-сессия в окне password.sso_window: текущий не спрашивается
 	RemoteIP string // реальный IP пользователя
 }
 
@@ -108,6 +115,8 @@ type Brand struct {
 	Accent      string            `json:"accent,omitempty"`
 	AccentDark  string            `json:"accent_dark,omitempty"`
 	CSSVars     map[string]string `json:"css_vars,omitempty"`
+	// HideAbout убирает кнопку и окно «О программе». Провайдер может только скрыть его.
+	HideAbout bool `json:"hide_about,omitempty"`
 }
 
 type BrandProvider interface {

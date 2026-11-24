@@ -190,6 +190,19 @@ func (p *Pool) Close(sessionID string) {
 	}
 }
 
+// CloseAll закрывает все соединения пула (остановка сервера, тесты).
+func (p *Pool) CloseAll() {
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.byID))
+	for id := range p.byID {
+		ids = append(ids, id)
+	}
+	p.mu.Unlock()
+	for _, id := range ids {
+		p.Close(id)
+	}
+}
+
 func (p *Pool) reaper() {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()

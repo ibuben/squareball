@@ -1,104 +1,66 @@
-// Строки интерфейса. Русский — по умолчанию; ключи без перевода берутся из ru.
-const ru = {
-  'login.title': 'Вход в почту',
-  'login.username': 'Адрес почты',
-  'login.password': 'Пароль',
-  'login.submit': 'Войти',
-  'login.failed': 'Неверный адрес или пароль',
-  'login.locked': 'Слишком много попыток. Попробуйте позже',
-  'login.unavailable': 'Почтовый сервер недоступен',
-  'nav.mail': 'Почта',
-  'nav.contacts': 'Контакты',
-  'nav.calendar': 'Календарь',
-  'nav.settings': 'Настройки',
-  'compose.new': 'Новое письмо',
-  'search.placeholder': 'Поиск в папке',
-  'folder.inbox': 'Входящие',
-  'folder.drafts': 'Черновики',
-  'folder.sent': 'Отправленные',
-  'folder.archive': 'Архив',
-  'folder.junk': 'Спам',
-  'folder.trash': 'Корзина',
-  'filter.all': 'Все',
-  'filter.unread': 'Непрочитанные',
-  'filter.flagged': 'Помеченные',
-  'group.today': 'Сегодня',
-  'group.yesterday': 'Вчера',
-  'group.week': 'На этой неделе',
-  'group.month': 'В этом месяце',
-  'group.older': 'Раньше',
-  'list.empty': 'Писем нет',
-  'list.more': 'Загрузить ещё',
-  'list.nosubject': '(без темы)',
-  'read.empty': 'Выберите письмо',
-  'read.reply': 'Ответить',
-  'read.replyAll': 'Всем',
-  'read.forward': 'Переслать',
-  'read.archive': 'В архив',
-  'read.delete': 'Удалить',
-  'read.junk': 'Спам',
-  'read.unread': 'Непрочитанное',
-  'read.flag': 'Пометить',
-  'read.source': 'Исходник',
-  'read.to': 'Кому',
-  'read.cc': 'Копия',
-  'read.images': 'Картинки из интернета скрыты для защиты приватности.',
-  'read.showImages': 'Показать',
-  'read.attachments': 'Вложения',
-  'read.unsubscribe': 'Отписаться',
-  'compose.to': 'Кому',
-  'compose.from': 'От',
-  'compose.cc': 'Копия',
-  'compose.bcc': 'Скрытая',
-  'compose.subject': 'Тема',
-  'compose.send': 'Отправить',
-  'compose.attach': 'Прикрепить',
-  'compose.discard': 'Удалить черновик',
-  'compose.saving': 'Сохранение…',
-  'compose.showQuote': 'Показать цитату',
-  'compose.hideQuote': 'Скрыть цитату',
-  'compose.removeQuote': 'Убрать цитату',
-  'compose.placeholder': 'Текст письма',
-  'compose.saved': 'Сохранено в',
-  'compose.saveFailed': 'Черновик не сохранён',
-  'compose.draftSaved': 'Черновик сохранён',
-  'compose.draftDeleted': 'Черновик удалён',
-  'read.continue': 'Продолжить',
-  'compose.sent': 'Письмо отправлено',
-  'compose.noRecipients': 'Укажите получателя',
-  'compose.tooLarge': 'Вложения слишком большие',
-  'compose.wrote': 'писал(а)',
-  'compose.forwarded': 'Пересылаемое сообщение',
-  'toast.deleted': 'Перемещено в корзину',
-  'toast.deletedForever': 'Удалено',
-  'toast.moved': 'Перемещено',
-  'toast.error': 'Не удалось выполнить действие',
-  'toast.sessionExpired': 'Сессия истекла, войдите снова',
-  'contact.history': 'Письма',
-  'menu.logout': 'Выйти',
-  'menu.theme': 'Тема',
-  'theme.light': 'Светлая',
-  'theme.dark': 'Тёмная',
-  'theme.system': 'Как в системе',
-  'help.shortcuts': 'Клавиши: c — новое, r — ответить, a — всем, f — переслать, Del — удалить, j/k — следующее/предыдущее, / — поиск',
+// Строки интерфейса. Словари — в locales/: en.ts — эталонный (все ключи), остальные
+// типизированы по нему, так что непереведённый ключ — ошибка сборки.
+// Язык: выбор пользователя (localStorage) → ui.default_language с сервера → английский.
+// Текущий язык — реактивный: компоненты, вызывающие t() в шаблоне, перерисуются при смене.
+import { ref } from 'vue'
+import en from './locales/en'
+import ru from './locales/ru'
+
+export type Key = keyof typeof en
+
+// Название языка — на самом языке, чтобы его нашёл тот, кто не читает текущий.
+export const LANGS = { en: 'English', ru: 'Русский' } as const
+export type Lang = keyof typeof LANGS
+
+const dicts: Record<Lang, Record<Key, string>> = { en, ru }
+const STORE = 'wm.lang'
+export const isLang = (v: unknown): v is Lang => typeof v === 'string' && v in LANGS
+
+function stored(): Lang | null {
+  try {
+    const v = localStorage.getItem(STORE)
+    return isLang(v) ? v : null
+  } catch { return null }
 }
 
-type Key = keyof typeof ru
-const en: Partial<Record<Key, string>> = {
-  'login.title': 'Sign in to mail', 'login.username': 'Email address', 'login.password': 'Password',
-  'login.submit': 'Sign in', 'login.failed': 'Wrong address or password',
-  'compose.new': 'New message', 'folder.inbox': 'Inbox', 'folder.drafts': 'Drafts', 'folder.sent': 'Sent',
-  'folder.archive': 'Archive', 'folder.junk': 'Junk', 'folder.trash': 'Trash', 'read.empty': 'Select a message',
-  'read.reply': 'Reply', 'read.replyAll': 'Reply all', 'read.forward': 'Forward', 'read.delete': 'Delete',
-  'compose.send': 'Send', 'menu.logout': 'Sign out',
+const current = ref<Lang>(stored() ?? 'en')
+document.documentElement.lang = current.value
+
+export const lang = () => current.value
+
+// Явный выбор пользователя — запоминается в браузере.
+export function setLang(l: Lang) {
+  current.value = l
+  document.documentElement.lang = l
+  try { localStorage.setItem(STORE, l) } catch { /* приватный режим */ }
 }
 
-const dicts: Record<string, Partial<Record<Key, string>>> = { ru, en }
-const lang = (navigator.language || 'ru').slice(0, 2)
-const active = dicts[lang] ?? ru
-
-export function t(key: Key): string {
-  return active[key] ?? ru[key]
+// Язык установки (ui.default_language) — только если пользователь ещё не выбирал сам.
+export function setDefaultLang(l: unknown) {
+  if (stored() || !isLang(l)) return
+  current.value = l
+  document.documentElement.lang = l
 }
 
-export const locale = lang === 'en' ? 'en' : 'ru'
+// Языки, которые можно выбрать: из ui.languages те, для которых есть словарь.
+export function availableLangs(allowed?: string[]): Lang[] {
+  const all = Object.keys(LANGS) as Lang[]
+  const list = allowed?.length ? all.filter((l) => allowed.includes(l)) : all
+  return list.length ? list : all
+}
+
+// t('key', { n: 3 }) — подстановка {n} в строку.
+export function t(key: Key, params?: Record<string, string | number>): string {
+  const s = dicts[current.value][key] ?? en[key]
+  return params ? s.replace(/\{(\w+)\}/g, (m, p: string) => (p in params ? String(params[p]) : m)) : s
+}
+
+// Локаль для дат и чисел.
+export const dateLocale = () => (current.value === 'ru' ? 'ru-RU' : 'en-GB')
+
+// Множественное число: tn('inv.people', 5) → ключ inv.people.one/few/many/other по правилам языка, {n} — число.
+export function tn(base: string, n: number, params?: Record<string, string | number>): string {
+  const exact = `${base}.${new Intl.PluralRules(current.value).select(n)}`
+  const key = (exact in en ? exact : `${base}.other`) as Key
+  return t(key, { n, ...params })
+}

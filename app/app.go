@@ -207,7 +207,7 @@ func Run(ctx context.Context, cfgPath string, adapters ...ext.Adapter) error {
 	}
 	defer st.Close()
 	log.Info("storage", "driver", "sqlite", "path", dbPath)
-	srv, err := api.New(api.Options{Config: cfg, Logger: log, Audit: audit, SessionSecret: secret, Store: st, Static: web.Handler()})
+	srv, err := api.New(api.Options{Config: cfg, Logger: log, Audit: audit, SessionSecret: secret, Store: st, Static: web.Handler(), Version: Version})
 	if err != nil {
 		return err
 	}

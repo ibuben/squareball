@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  CalendarDays, LogOut, Mail, Menu, Monitor, Moon, PanelRight, PenSquare, Settings, Sun, Users,
+  CalendarDays, Info, LogOut, Mail, Menu, PanelRight, PenSquare, Settings, Users,
 } from 'lucide-vue-next'
 import { api } from '../api'
 import { t } from '../i18n'
@@ -12,13 +12,17 @@ const ContactsView = defineAsyncComponent(() => import('./ContactsView.vue'))
 import MessageList from './MessageList.vue'
 import ReadingPane from './ReadingPane.vue'
 import ContactPane from './ContactPane.vue'
+import ThemeToggle from './ThemeToggle.vue'
+const AboutDialog = defineAsyncComponent(() => import('./AboutDialog.vue'))
 import {
-  applyTheme, deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, visibleRows, openCompose, openFolder, openMessage, setMe, state,
+  deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, visibleRows, openCompose, openFolder, openMessage, setMe, state,
 } from '../store'
 import { brandLogo } from '../brand'
 
 const reading = ref<InstanceType<typeof ReadingPane>>()
 const menu = ref(false)
+const about = ref(false)
+const showAbout = computed(() => !state.me?.brand.hide_about)
 const drawer = ref(false) // панель папок на узких экранах
 
 // Ширины панелей можно менять перетаскиванием; сохраняются в браузере.
@@ -50,7 +54,7 @@ function toggleContact() {
   state.showContact = !state.showContact
   try { localStorage.setItem('wm.contact', state.showContact ? '1' : '0') } catch { /* ignore */ }
 }
-function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyTheme(); menu.value = false }
+function openAbout() { about.value = true; menu.value = false }
 
 async function logout() {
   try { await api.logout() } finally { setMe(null) }
@@ -142,19 +146,17 @@ onBeforeUnmount(() => {
         <span>{{ state.me?.brand.name }}</span>
       </div>
       <div class="spacer" />
-      <button class="icon-btn contact-toggle" :class="{ active: state.showContact }" title="Contact" @click="toggleContact"><PanelRight :size="17" /></button>
+      <ThemeToggle class="narrow" :size="17" />
+      <button class="icon-btn contact-toggle" :class="{ active: state.showContact }" :title="t('contact.panel')" :aria-label="t('contact.panel')" @click="toggleContact"><PanelRight :size="17" /></button>
       <div class="user">
         <button class="userbtn" @click="menu = !menu">
           <span class="ellipsis">{{ state.me?.mailbox }}</span>
         </button>
         <div v-if="menu" class="menu" @mouseleave="menu = false">
-          <div class="faint mlabel">{{ t('menu.theme') }}</div>
-          <button @click="setTheme('light')"><Sun :size="15" /> {{ t('theme.light') }}</button>
-          <button @click="setTheme('dark')"><Moon :size="15" /> {{ t('theme.dark') }}</button>
-          <button @click="setTheme('system')"><Monitor :size="15" /> {{ t('theme.system') }}</button>
-          <hr />
           <button @click="go('contacts')"><Users :size="15" /> {{ t('nav.contacts') }}</button>
           <button @click="go('settings')"><Settings :size="15" /> {{ t('nav.settings') }}</button>
+          <!-- На узких экранах левой панели нет — её кнопки здесь. -->
+          <button v-if="showAbout" class="narrow" @click="openAbout"><Info :size="15" /> {{ t('nav.about') }}</button>
           <button @click="logout"><LogOut :size="15" /> {{ t('menu.logout') }}</button>
         </div>
       </div>
@@ -166,7 +168,9 @@ onBeforeUnmount(() => {
       <button class="icon-btn" :class="{ active: state.view === 'contacts' }" :title="t('nav.contacts')" :aria-label="t('nav.contacts')" @click="go('contacts')"><Users :size="20" /></button>
       <button class="icon-btn" :title="t('nav.calendar')" disabled><CalendarDays :size="20" /></button>
       <span class="spacer" />
+      <ThemeToggle />
       <button class="icon-btn" :class="{ active: state.view === 'settings' }" :title="t('nav.settings')" :aria-label="t('nav.settings')" @click="go('settings')"><Settings :size="20" /></button>
+      <button v-if="showAbout" class="icon-btn" :class="{ active: about }" :title="t('nav.about')" :aria-label="t('nav.about')" data-test="about" @click="openAbout"><Info :size="20" /></button>
     </nav>
     <SettingsView v-if="state.view === 'settings'" />
     <ContactsView v-else-if="state.view === 'contacts'" />
@@ -180,6 +184,7 @@ onBeforeUnmount(() => {
       <ContactPane v-if="state.showContact" class="p-contact" />
     </div>
     </div>
+    <AboutDialog v-if="about" @close="about = false" />
     <button v-if="state.view === 'mail'" class="fab" :aria-label="t('compose.new')" @click="openCompose()"><PenSquare :size="22" /></button>
   </div>
 </template>
@@ -196,7 +201,7 @@ onBeforeUnmount(() => {
 .menu button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; background: none; border-radius: 6px; text-align: left; }
 .menu button:hover { background: var(--hover); }
 .menu hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
-.mlabel { padding: 4px 8px; font-size: 12px; }
+.narrow { display: none !important; }
 .main { display: grid; grid-template-columns: 52px minmax(0, 1fr); min-height: 0; }
 .main > * { min-height: 0; }
 .panes { display: grid; min-height: 0; }
@@ -219,6 +224,8 @@ onBeforeUnmount(() => {
   .main { grid-template-columns: minmax(0, 1fr); }
   .panes { grid-template-columns: 0 340px 1px minmax(0,1fr) !important; }
   .rail { display: none; }
+  .narrow { display: inline-flex !important; }
+  .menu .narrow { display: flex !important; }
   .burger { display: inline-flex; }
   .p-folders { position: fixed; z-index: 25; left: 0; top: 44px; bottom: 0; width: 260px; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
   .shell.drawer .p-folders { transform: none; }

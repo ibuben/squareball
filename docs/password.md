@@ -50,7 +50,9 @@
 {"user": "bob@example.com", "current": "старый", "password": "новый", "remote": "203.0.113.7"}
 ```
 
-`sso: true` и пустой `current` бывают только у адаптеров со входом через SSO.
+`sso: true` и пустой `current` приходят, когда пользователь вошёл из панели (адаптер `panel`,
+[integration.md](integration.md)) не дольше `password.sso_window` назад. Такой запрос бывает,
+только если у драйвера не стоит `verifies_current: true`.
 
 ## exec
 

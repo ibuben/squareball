@@ -1,10 +1,10 @@
 import { reactive } from 'vue'
 import {
   api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Identity, type Me, type MessageView, type MsgRef,
-  type Prefs, type Summary, type Template,
+  type Prefs, type Summary, type Template, type UIConfig,
 } from './api'
 import { applyBrand } from './brand'
-import { t } from './i18n'
+import { setDefaultLang, t, type Key } from './i18n'
 
 export interface ComposeInit {
   to?: Address[]; cc?: Address[]; bcc?: Address[]; subject?: string
@@ -37,7 +37,8 @@ export const state = reactive({
   loadingMessage: false,
   composes: [] as { id: number; init: ComposeInit }[],
   toasts: [] as Toast[],
-  theme: (localStorage.getItem('wm.theme') as 'light' | 'dark' | 'system') || 'system',
+  theme: storedTheme() ?? 'system',
+  config: null as UIConfig | null, // /api/v1/config: бренд для экрана входа, языки, тема по умолчанию
   dark: false, // итоговая тема с учётом system
   showContact: localStorage.getItem('wm.contact') !== '0',
   view: 'mail' as 'mail' | 'settings' | 'contacts',
@@ -67,7 +68,7 @@ export async function loadPrefs() {
 export async function savePrefs(p: Partial<Prefs>) {
   try {
     state.prefs = (await api.setPrefs(p)).prefs
-    toast('Сохранено')
+    toast(t('toast.saved'))
   } catch (e) { reportError(e) }
 }
 
@@ -79,14 +80,33 @@ export function toast(text: string, action?: Toast['action']) {
   setTimeout(() => { state.toasts = state.toasts.filter((x) => x.id !== id) }, action ? 6000 : 4000)
 }
 
+export type Theme = 'light' | 'dark' | 'system'
+const THEMES: Theme[] = ['light', 'dark', 'system']
+
+function storedTheme(): Theme | null {
+  try {
+    const v = localStorage.getItem('wm.theme') as Theme
+    return THEMES.includes(v) ? v : null
+  } catch { return null }
+}
+
 export function applyTheme() {
   const dark = state.theme === 'dark' ||
     (state.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   state.dark = dark
   applyBrand()
-  try { localStorage.setItem('wm.theme', state.theme) } catch { /* приватный режим */ }
 }
+
+// Явный выбор темы запоминается в браузере; без него действует ui.theme сервера.
+export function setTheme(th: Theme) {
+  state.theme = th
+  applyTheme()
+  try { localStorage.setItem('wm.theme', th) } catch { /* приватный режим */ }
+}
+
+// Переключатель: светлая → тёмная → как в системе → светлая.
+export const nextTheme = (th: Theme): Theme => THEMES[(THEMES.indexOf(th) + 1) % THEMES.length]
 
 
 export function setMe(me: Me | null) {
@@ -101,7 +121,7 @@ export function setMe(me: Me | null) {
 export function folderTitle(f: Folder | undefined): string {
   if (!f) return ''
   const key = f.role ? (`folder.${f.role}` as const) : null
-  return key ? t(key as Parameters<typeof t>[0]) : f.display
+  return key ? t(key as Key) : f.display
 }
 
 export const currentFolder = () => state.folders.find((f) => f.name === state.folder)
@@ -122,16 +142,16 @@ export async function loadFolders() {
 
 // --- управление папками -------------------------------------------------------
 
-const folderErrors: Record<string, string> = {
-  'folder.name': 'Недопустимое имя папки: без «/», «*», «%» и пробелов по краям',
-  'folder.exists': 'Папка с таким именем уже есть',
-  'folder.protected': 'Системные папки нельзя переименовать или удалить',
-  'mail.not_found': 'Папка не найдена — список обновлён',
+const folderErrors: Record<string, Key> = {
+  'folder.name': 'folder.err.name',
+  'folder.exists': 'folder.err.exists',
+  'folder.protected': 'folder.err.protected',
+  'mail.not_found': 'folder.err.notFound',
 }
 
 function folderError(e: unknown) {
   if (e instanceof ApiError && folderErrors[e.code]) {
-    toast(folderErrors[e.code])
+    toast(t(folderErrors[e.code]))
     if (e.code === 'mail.not_found') void loadFolders()
   } else reportError(e)
 }
@@ -173,7 +193,7 @@ export async function createFolder(parent: string, name: string): Promise<boolea
   try {
     const r = await api.createFolder(parent, name.trim())
     afterFolders(r.folders)
-    toast(`Папка «${name.trim()}» создана`)
+    toast(t('folder.created', { name: name.trim() }))
     return true
   } catch (e) { folderError(e); return false }
 }
@@ -189,7 +209,7 @@ export async function renameFolder(f: Folder, parent: string, name: string): Pro
 export async function deleteFolder(f: Folder): Promise<boolean> {
   try {
     afterFolders((await api.deleteFolder(f.name)).folders)
-    toast(`Папка «${f.display}» удалена`)
+    toast(t('folder.deleted', { name: f.display }))
     return true
   } catch (e) { folderError(e); return false }
 }
@@ -202,20 +222,20 @@ export async function emptyFolder(f: Folder) {
   try {
     afterFolders((await api.emptyFolder(f.name)).folders)
     if (state.folder === f.name) void openFolder(f.name)
-    toast(`Папка «${folderTitle(f)}» очищена`)
+    toast(t('folder.emptied', { name: folderTitle(f) }))
   } catch (e) { folderError(e) }
 }
 
 // Импорт писем из .mbox / .eml в папку.
 export async function importMail(f: Folder, files: File[]) {
   if (!files.length) return
-  toast(`Загрузка писем в «${folderTitle(f)}»…`)
+  toast(t('import.loading', { name: folderTitle(f) }))
   try {
     const r = await api.importMail(f.name, files)
-    const parts = [`Загружено писем: ${r.imported}`]
-    if (r.duplicates) parts.push(`уже были: ${r.duplicates}`)
-    if (r.too_large) parts.push(`слишком большие: ${r.too_large}`)
-    if (r.failed) parts.push(`не приняты сервером: ${r.failed}`)
+    const parts = [t('import.done', { n: r.imported })]
+    if (r.duplicates) parts.push(t('import.dups', { n: r.duplicates }))
+    if (r.too_large) parts.push(t('import.tooLarge', { n: r.too_large }))
+    if (r.failed) parts.push(t('import.failed', { n: r.failed }))
     toast(parts.join(', '))
     void loadFolders()
     if (state.folder === f.name) void loadList()
@@ -412,7 +432,7 @@ export async function archiveSelected() {
   dropFromList(uids)
   try {
     await api.archive(folder, uids)
-    toast('Перемещено в архив')
+    toast(t('toast.archived'))
     void loadFolders()
   } catch (e) { reportError(e); void loadList() }
 }
@@ -476,12 +496,24 @@ export function closeCompose(id: number) {
   state.composes = state.composes.filter((c) => c.id !== id)
 }
 
+// Настройки установки: язык и тема по умолчанию, бренд. Без них интерфейс работает на своих умолчаниях.
+async function loadConfig() {
+  try {
+    const c = await api.config()
+    state.config = c
+    setDefaultLang(c.default_language)
+    if (!storedTheme() && THEMES.includes(c.theme)) { state.theme = c.theme; applyTheme() }
+  } catch { /* экран входа работает и без конфига */ }
+}
+
 export async function boot() {
+  const cfg = loadConfig()
   try {
     setMe(await api.me())
   } catch (e) {
     if (!(e instanceof ApiError && e.status === 401)) console.error(e)
   } finally {
+    await cfg // язык установки — до первой отрисовки
     state.booting = false
   }
 }

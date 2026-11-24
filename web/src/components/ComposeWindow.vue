@@ -63,15 +63,15 @@ function insertTemplate(html: string) {
 }
 async function saveAsTemplate() {
   templatesOpen.value = false
-  if (editor.value?.isEmpty()) { toast('Текст письма пуст'); return }
-  const name = prompt('Название шаблона', subject.value)
+  if (editor.value?.isEmpty()) { toast(t('tpl.emptyText')); return }
+  const name = prompt(t('tpl.namePrompt'), subject.value)
   if (!name?.trim()) return
   try {
     await api.saveTemplate({ name: name.trim(), html: editor.value?.getHTML() ?? '' })
     void loadTemplates()
-    toast(`Шаблон «${name.trim()}» сохранён`)
+    toast(t('tpl.saved', { name: name.trim() }))
   } catch (e) {
-    toast(e instanceof ApiError && e.code === 'template.too_large' ? 'Шаблон слишком большой' : t('toast.error'))
+    toast(e instanceof ApiError && e.code === 'template.too_large' ? t('tpl.tooLarge') : t('toast.error'))
   }
 }
 const optionsCount = computed(() => (priority.value ? 1 : 0) + (readReceipt.value ? 1 : 0) + (dsn.value ? 1 : 0))
@@ -302,31 +302,31 @@ async function discard() {
       <footer>
         <button class="btn primary" :disabled="sending" @click="send"><Send :size="15" /> {{ t('compose.send') }}</button>
         <span class="opts-wrap">
-          <button type="button" class="icon-btn" title="Шаблоны" aria-label="Шаблоны" data-test="compose-templates"
+          <button type="button" class="icon-btn" :title="t('tpl.title')" :aria-label="t('tpl.title')" data-test="compose-templates"
                   @click="toggleTemplates"><FileText :size="16" /></button>
-          <div v-if="templatesOpen" class="opts tpl" role="menu" aria-label="Шаблоны">
+          <div v-if="templatesOpen" class="opts tpl" role="menu" :aria-label="t('tpl.title')">
             <button v-for="tpl in state.templates" :key="tpl.id" type="button" role="menuitem" class="tpl-item"
                     :data-template="tpl.name" @click="insertTemplate(tpl.html)">{{ tpl.name }}</button>
-            <p v-if="!state.templates.length" class="faint">Шаблонов нет. Их можно завести в настройках.</p>
+            <p v-if="!state.templates.length" class="faint">{{ t('tpl.none') }}</p>
             <hr />
-            <button type="button" role="menuitem" class="tpl-item" @click="saveAsTemplate"><Save :size="14" /> Сохранить текст как шаблон</button>
+            <button type="button" role="menuitem" class="tpl-item" @click="saveAsTemplate"><Save :size="14" /> {{ t('tpl.saveAs') }}</button>
           </div>
         </span>
         <span class="opts-wrap">
-          <button type="button" class="icon-btn" :class="{ active: optionsCount }" title="Параметры отправки"
-                  aria-label="Параметры отправки" data-test="compose-options" @click="optionsOpen = !optionsOpen; templatesOpen = false">
+          <button type="button" class="icon-btn" :class="{ active: optionsCount }" :title="t('compose.options')"
+                  :aria-label="t('compose.options')" data-test="compose-options" @click="optionsOpen = !optionsOpen; templatesOpen = false">
             <SlidersHorizontal :size="16" /><span v-if="optionsCount" class="badge">{{ optionsCount }}</span>
           </button>
-          <div v-if="optionsOpen" class="opts" role="group" aria-label="Параметры отправки">
-            <label>Важность
+          <div v-if="optionsOpen" class="opts" role="group" :aria-label="t('compose.options')">
+            <label>{{ t('compose.priority') }}
               <select v-model.number="priority" class="input" data-test="compose-priority" @change="touch">
-                <option :value="0">Обычная</option>
-                <option :value="1">Высокая</option>
-                <option :value="5">Низкая</option>
+                <option :value="0">{{ t('compose.prioNormal') }}</option>
+                <option :value="1">{{ t('compose.prioHigh') }}</option>
+                <option :value="5">{{ t('compose.prioLow') }}</option>
               </select>
             </label>
-            <label class="check"><input v-model="readReceipt" type="checkbox" data-test="compose-mdn" @change="touch" /> Запросить уведомление о прочтении</label>
-            <label class="check"><input v-model="dsn" type="checkbox" @change="touch" /> Запросить уведомление о доставке</label>
+            <label class="check"><input v-model="readReceipt" type="checkbox" data-test="compose-mdn" @change="touch" /> {{ t('compose.askMdn') }}</label>
+            <label class="check"><input v-model="dsn" type="checkbox" @change="touch" /> {{ t('compose.askDsn') }}</label>
           </div>
         </span>
         <label class="icon-btn" :title="t('compose.attach')">

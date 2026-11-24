@@ -20,6 +20,7 @@ import (
 	"github.com/ibuben/squareball/internal/mail"
 	"github.com/ibuben/squareball/internal/password"
 	"github.com/ibuben/squareball/internal/sanitize"
+	"github.com/ibuben/squareball/internal/session"
 )
 
 func (s *Server) routes(static http.Handler) {
@@ -134,7 +135,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.loginUser.Reset(user)
-	sess, cookie, err := s.sessions.Create(user, in.Password, ext.AuthPassword, "password", ip, r.UserAgent())
+	sess, cookie, err := s.sessions.Create(user, in.Password, ext.AuthPassword, session.SourcePassword, ip, r.UserAgent())
 	if err != nil {
 		c.Close()
 		writeErr(w, http.StatusInternalServerError, "internal", "")
@@ -171,6 +172,7 @@ func (s *Server) meBody(r *http.Request, mailbox, csrf string) map[string]any {
 			"max_recipients": int64(s.cfg.SMTP.RateLimit.MaxRecipients),
 		},
 		"remote_images": s.cfg.UI.Attachments.RemoteImages,
+		"version":       s.version,
 	}
 }
 
@@ -285,6 +287,7 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		"body_html":      body.HTML,
 		"body_text":      text, // для цитирования при ответе
 		"blocked_images": body.BlockedImages,
+		"invite":         s.inviteView(r, m),
 	})
 }
 
@@ -675,8 +678,18 @@ func (s *Server) handlePasswordInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"policy": password.FromConfig(&s.cfg.Password, pc.Capabilities().Policy),
+		"policy":           password.FromConfig(&s.cfg.Password, pc.Capabilities().Policy),
+		"current_required": !s.ssoPasswordSkip(sessionFrom(r.Context()), pc),
 	})
+}
+
+// ssoPasswordSkip — можно ли сменить пароль без текущего: сессия открыта
+// из панели (SSO) не дольше password.sso_window назад, и драйвер умеет
+// обходиться без текущего пароля.
+func (s *Server) ssoPasswordSkip(sess *session.Session, pc ext.PasswordChanger) bool {
+	w := s.cfg.Password.SSOWindow
+	return w > 0 && sess.Source != session.SourcePassword && time.Since(sess.Created) < w &&
+		pc.Capabilities().SSOWithoutCurrent
 }
 
 func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
@@ -695,7 +708,11 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caps := pc.Capabilities()
-	if in.Current == "" {
+	ssoSkip := s.ssoPasswordSkip(sess, pc)
+	if ssoSkip {
+		in.Current = "" // в окне после SSO текущий не нужен и драйверу не передаётся
+	}
+	if in.Current == "" && !ssoSkip {
 		writeErr(w, http.StatusBadRequest, "password.current_required", "")
 		return
 	}
@@ -714,7 +731,7 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
 		return
 	}
-	if !caps.VerifiesCurrent {
+	if !caps.VerifiesCurrent && !ssoSkip {
 		c, err := mail.DialIMAP(&s.cfg.IMAP, mail.Creds{Username: sess.Mailbox, Password: in.Current})
 		if err != nil {
 			if errors.Is(err, mail.ErrAuth) {
@@ -743,7 +760,7 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	// Смену не прерываем, если клиент закрыл соединение: драйвер ограничен
 	// своим тайм-аутом, а половина смены хуже, чем лишняя секунда ожидания.
 	err := pc.Change(context.WithoutCancel(r.Context()), ext.PasswordChange{
-		Mailbox: sess.Mailbox, Current: in.Current, New: in.New, RemoteIP: s.ClientIP(r),
+		Mailbox: sess.Mailbox, Current: in.Current, New: in.New, SSOSkip: ssoSkip, RemoteIP: s.ClientIP(r),
 	})
 	switch {
 	case err == nil:
@@ -752,7 +769,7 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		}
 		s.pool.Close(sess.ID) // следующий запрос переподключится с новым паролем
 		s.sessions.DeleteMailbox(sess.Mailbox, sess.ID)
-		s.audit.Info("password changed", "mailbox", sess.Mailbox, "ip", s.ClientIP(r))
+		s.audit.Info("password changed", "mailbox", sess.Mailbox, "sso", ssoSkip, "ip", s.ClientIP(r))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case errors.Is(err, ext.ErrWrongPassword):
 		s.audit.Info("password change rejected", "mailbox", sess.Mailbox, "reason", "current", "ip", s.ClientIP(r))

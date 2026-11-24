@@ -1,7 +1,5 @@
 import type { Address } from './api'
-import { locale, t } from './i18n'
-
-const loc = locale === 'en' ? 'en-GB' : 'ru-RU'
+import { dateLocale, t } from './i18n'
 
 export function escapeHTML(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
@@ -40,16 +38,16 @@ export function listDate(iso: string): string {
   const d = new Date(iso)
   const now = new Date()
   if (startOfDay(d).getTime() === startOfDay(now).getTime()) {
-    return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit' })
   }
   const days = (startOfDay(now).getTime() - startOfDay(d).getTime()) / 864e5
-  if (days < 7) return d.toLocaleDateString(loc, { weekday: 'short' })
-  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(loc, { day: 'numeric', month: 'short' })
-  return d.toLocaleDateString(loc, { day: '2-digit', month: '2-digit', year: 'numeric' })
+  if (days < 7) return d.toLocaleDateString(dateLocale(), { weekday: 'short' })
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' })
+  return d.toLocaleDateString(dateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 export function fullDate(iso: string): string {
-  return new Date(iso).toLocaleString(loc, { dateStyle: 'medium', timeStyle: 'short' })
+  return new Date(iso).toLocaleString(dateLocale(), { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 export function dateGroup(iso: string): string {

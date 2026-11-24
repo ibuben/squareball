@@ -10,6 +10,12 @@ imap:
   port: 993
   security: tls
   tls_verify: false        # самоподписанный сертификат стенда
+  impersonation:           # вход из панели (adapters.panel) мастер-учёткой Dovecot
+    enabled: true
+    master_user: webmail-master
+    master_password_file: ./deploy/devstand/master.key
+    allowed_sources: [panel]
+    apply_to: [smtp, sieve]
 smtp:
   host: 127.0.0.1
   port: 587
@@ -41,3 +47,9 @@ adapters:
         url: http://127.0.0.1:5232/%l/
         username: "%l"
         password: session
+  panel:
+    enabled: true
+    secret_file: ./deploy/devstand/panel-sso.key
+    domains: [test.local]
+    api:
+      token_file: ./deploy/devstand/panel-api.token

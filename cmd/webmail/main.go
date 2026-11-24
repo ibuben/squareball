@@ -4,7 +4,8 @@ package main
 
 import (
 	"github.com/ibuben/squareball/adapters/carddav"
+	"github.com/ibuben/squareball/adapters/panel"
 	"github.com/ibuben/squareball/app"
 )
 
-func main() { app.Main(carddav.New()) }
+func main() { app.Main(carddav.New(), panel.New()) }

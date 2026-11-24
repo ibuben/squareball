@@ -53,6 +53,9 @@ func newServer(t *testing.T, c *config.Config) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// IMAP-соединения тестов не должны копиться: у Dovecot лимит
+	// mail_max_userip_connections на пользователя и адрес.
+	t.Cleanup(s.pool.CloseAll)
 	return s
 }
 

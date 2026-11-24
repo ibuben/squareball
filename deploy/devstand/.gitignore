@@ -1,1 +1,4 @@
 session.key
+master.key
+panel-sso.key
+panel-api.token

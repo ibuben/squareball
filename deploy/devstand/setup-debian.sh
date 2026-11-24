@@ -38,6 +38,15 @@ mail_gid = vmail
 
 auth_mechanisms = plain login
 
+# Мастер-учётка webmail: вход из панели без пароля ящика (imap.impersonation,
+# SASL PLAIN authzid). Ящик всё равно ищется в обычном passdb — несуществующий не пустит.
+passdb master {
+  driver = passwd-file
+  master = yes
+  passwd_file_path = /etc/dovecot/master-users
+  result_success = continue
+}
+
 passdb passwd-file {
   passwd_file_path = /etc/dovecot/passwd.d/users
 }
@@ -118,6 +127,20 @@ if getent passwd webmail >/dev/null; then
   chown webmail /etc/dovecot/passwd.d "$USERS_FILE"
 fi
 
+# Мастер-учётка и ключи адаптера panel для deploy/devstand/config.yaml.
+STAND_DIR=$(dirname "$0")
+MASTER_PASS='Master12345!'
+echo "webmail-master:$(doveadm pw -s BLF-CRYPT -p "$MASTER_PASS")::::::" > /etc/dovecot/master-users
+chown root:dovecot /etc/dovecot/master-users
+chmod 0640 /etc/dovecot/master-users
+(umask 077
+ printf '%s\n' "$MASTER_PASS" > "$STAND_DIR/master.key"
+ [ -s "$STAND_DIR/panel-sso.key" ] || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$STAND_DIR/panel-sso.key"
+ [ -s "$STAND_DIR/panel-api.token" ] || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$STAND_DIR/panel-api.token")
+if [ -n "${SUDO_USER:-}" ]; then
+  chown "$SUDO_USER" "$STAND_DIR/master.key" "$STAND_DIR/panel-sso.key" "$STAND_DIR/panel-api.token"
+fi
+
 doveconf -n >/dev/null
 systemctl restart dovecot
 
@@ -184,3 +207,4 @@ printf 'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:seed-1\r\nFN:Карина Радика
   curl -s -u "alice:$PASS" -X PUT http://127.0.0.1:5232/alice/contacts/seed-1.vcf -H 'Content-Type: text/vcard' --data-binary @- -o /dev/null
 
 echo "devstand ready: IMAP 127.0.0.1:143/993, submission 127.0.0.1:587, ManageSieve 127.0.0.1:4190, CardDAV 127.0.0.1:5232"
+echo "master user webmail-master (deploy/devstand/master.key), panel SSO key deploy/devstand/panel-sso.key"

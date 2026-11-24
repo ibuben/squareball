@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { Plus, Trash2 } from 'lucide-vue-next'
 import { api, ApiError, type Template } from '../../api'
 import { loadTemplates, state, toast } from '../../store'
+import { t, type Key } from '../../i18n'
 import RichEditor from '../RichEditor.vue'
 
 const editing = ref<Partial<Template> | null>(null)
@@ -19,10 +20,10 @@ function edit(tpl?: Template) {
   editing.value = tpl ? { ...tpl } : { id: 0, name: '', html: '' }
 }
 
-const errors: Record<string, string> = {
-  'template.name': 'Укажите название (до 100 символов).',
-  'template.too_large': 'Шаблон слишком большой: уменьшите картинки или текст.',
-  'template.limit': 'Слишком много шаблонов.',
+const errors: Record<string, Key> = {
+  'template.name': 'tpl.errName',
+  'template.too_large': 'tpl.errTooLarge',
+  'template.limit': 'tpl.errLimit',
 }
 
 async function save() {
@@ -34,21 +35,21 @@ async function save() {
     const saved = await api.saveTemplate({ ...editing.value, html })
     await loadTemplates()
     editing.value = null
-    toast(`Шаблон «${saved.name}» сохранён`)
+    toast(t('tpl.saved', { name: saved.name }))
   } catch (e) {
-    error.value = e instanceof ApiError ? errors[e.code] ?? e.detail ?? e.code : String(e)
+    error.value = e instanceof ApiError ? (errors[e.code] ? t(errors[e.code]) : e.detail || e.code) : String(e)
   } finally {
     saving.value = false
   }
 }
 
 async function remove(tpl: Template) {
-  if (!confirm(`Удалить шаблон «${tpl.name}»?`)) return
+  if (!confirm(t('tpl.confirmDelete', { name: tpl.name }))) return
   try {
     await api.deleteTemplate(tpl.id)
     await loadTemplates()
     if (editing.value?.id === tpl.id) editing.value = null
-  } catch { toast('Не удалось удалить') }
+  } catch { toast(t('common.deleteFailed')) }
 }
 
 const preview = (html: string) => new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim().slice(0, 90) ?? ''
@@ -56,8 +57,8 @@ const preview = (html: string) => new DOMParser().parseFromString(html, 'text/ht
 
 <template>
   <section>
-    <h2>Шаблоны ответов</h2>
-    <p class="muted">Готовые фрагменты текста. Вставляются в письмо кнопкой «Шаблоны» в окне письма.</p>
+    <h2>{{ t('set.templates') }}</h2>
+    <p class="muted">{{ t('tpl.hint') }}</p>
 
     <div class="list">
       <div v-for="tpl in state.templates" :key="tpl.id" class="row" :class="{ on: editing?.id === tpl.id }"
@@ -66,22 +67,22 @@ const preview = (html: string) => new DOMParser().parseFromString(html, 'text/ht
           <strong>{{ tpl.name }}</strong>
           <span class="faint ellipsis">{{ preview(tpl.html) }}</span>
         </div>
-        <button class="icon-btn" aria-label="Удалить" title="Удалить" @click.stop="remove(tpl)"><Trash2 :size="16" /></button>
+        <button class="icon-btn" :aria-label="t('common.delete')" :title="t('common.delete')" @click.stop="remove(tpl)"><Trash2 :size="16" /></button>
       </div>
-      <p v-if="!state.templates.length" class="faint">Шаблонов пока нет.</p>
+      <p v-if="!state.templates.length" class="faint">{{ t('tpl.noneYet') }}</p>
     </div>
-    <button class="btn" data-test="template-new" @click="edit()"><Plus :size="15" /> Новый шаблон</button>
+    <button class="btn" data-test="template-new" @click="edit()"><Plus :size="15" /> {{ t('tpl.new') }}</button>
 
     <form v-if="editing" class="card" @submit.prevent="save">
-      <label>Название <input v-model="editing.name" class="input" maxlength="100" required data-test="template-name" /></label>
-      <div class="sig-label">Текст</div>
+      <label>{{ t('tpl.name') }} <input v-model="editing.name" class="input" maxlength="100" required data-test="template-name" /></label>
+      <div class="sig-label">{{ t('tpl.text') }}</div>
       <div class="sig-editor">
-        <RichEditor :key="editorKey" ref="editor" :content="editing.html ?? ''" placeholder="Текст шаблона" />
+        <RichEditor :key="editorKey" ref="editor" :content="editing.html ?? ''" :placeholder="t('tpl.textPh')" />
       </div>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <div class="actions">
-        <button class="btn primary" :disabled="saving">Сохранить</button>
-        <button type="button" class="btn" @click="editing = null">Отмена</button>
+        <button class="btn primary" :disabled="saving">{{ t('common.save') }}</button>
+        <button type="button" class="btn" @click="editing = null">{{ t('common.cancel') }}</button>
       </div>
     </form>
   </section>

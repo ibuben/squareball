@@ -1,0 +1,169 @@
+# Интеграция с панелью хостинга
+
+Адаптер `adapters/panel` входит в стандартный бинарь и даёт панели два механизма:
+
+- **Вход в почту без пароля (SSO).** Панель подписывает одноразовую ссылку и отправляет по ней браузер. Webmail входит в IMAP и SMTP мастер-учёткой Dovecot, поэтому пароль ящика панели знать не нужно.
+- **Служебный API.** Через него панель завершает сессии ящика и удаляет данные, которые webmail хранит о нём.
+
+Смена пароля из webmail в панель описана отдельно: [password.md](password.md) (драйвер `http` или `exec`).
+
+## 1. Мастер-учётка Dovecot
+
+Webmail входит как `ящик*мастер` через SASL PLAIN с authzid. Ящик при этом всё равно проверяется в обычном passdb, поэтому несуществующий или заблокированный ящик не откроется.
+
+Dovecot 2.4:
+
+```
+passdb master {
+  driver = passwd-file
+  master = yes
+  passwd_file_path = /etc/dovecot/master-users
+  result_success = continue
+}
+```
+
+Dovecot 2.3:
+
+```
+passdb {
+  driver = passwd-file
+  master = yes
+  args = /etc/dovecot/master-users
+  pass = yes
+}
+```
+
+Создать файл мастер-учёток:
+
+```sh
+echo "webmail-master:$(doveadm pw -s BLF-CRYPT)::::::" > /etc/dovecot/master-users
+chown root:dovecot /etc/dovecot/master-users && chmod 640 /etc/dovecot/master-users
+```
+
+Тот же пароль, одной строкой, кладётся в `/etc/webmail/master.pass` с правами 0600 и владельцем `webmail`.
+
+Postfix с `smtpd_sasl_type = dovecot` принимает такой вход без дополнительной настройки. `reject_sender_login_mismatch` проверяет именно ящик, а не мастер-учётку: на стенде это проверено. ManageSieve у Dovecot тоже понимает authzid.
+
+## 2. Конфиг webmail
+
+```yaml
+imap:
+  impersonation:
+    enabled: true
+    master_user: webmail-master
+    master_password_file: /etc/webmail/master.pass
+    allowed_sources: [panel]      # имя источника адаптера panel
+    apply_to: [smtp, sieve]       # без smtp из SSO-сессии нельзя отправлять письма
+password:
+  sso_window: 10m                 # см. раздел 5; 0 — всегда спрашивать текущий пароль
+adapters:
+  panel:
+    enabled: true
+    secret_file: /etc/webmail/panel-sso.key       # общий с панелью ключ, 0600, ≥ 32 байт
+    max_ttl: 2m                                   # токен с более долгим сроком отвергается
+    domains: [example.com, example.org]           # пусто — любые (и login.allowed_domains)
+    error_url: https://panel.example.com/mail?sso=failed  # необязательно
+    api:
+      token_file: /etc/webmail/panel-api.token    # без него API выключен
+      allowed_ips: [127.0.0.1/32, ::1/128]        # по умолчанию только loopback
+```
+
+Сгенерировать ключи:
+
+```sh
+cd /etc/webmail && umask 077
+openssl rand -hex 32 > panel-sso.key
+openssl rand -hex 32 > panel-api.token
+chown webmail panel-sso.key panel-api.token
+```
+
+Ключ — это содержимое файла как текст, без завершающего перевода строки. В примере выше это 64 hex-символа, и именно эта строка используется как ключ HMAC, а не 32 байта, которые она кодирует. Панель хранит ту же строку.
+
+Проверить конфиг: `webmail config check`.
+
+## 3. Ссылка входа
+
+Токен:
+
+```
+v1.<payload>.<sig>
+payload = base64url(JSON), без "="
+sig     = base64url(HMAC-SHA256(ключ, "v1." + payload)), без "="
+```
+
+JSON:
+
+| Поле | Что это |
+| --- | --- |
+| `sub` | ящик `local@domain`, регистр не важен |
+| `exp` | unix-время окончания, обычно сейчас + 60 с; не дальше `max_ttl` |
+| `jti` | случайная строка 16–128 символов; второй раз токен не примут |
+
+Браузер отправляется либо `GET /sso/panel?token=…`, либо формой `POST /sso/panel` с полем `token`. Форма лучше: токен не попадёт в журналы прокси и историю браузера. При успехе webmail ставит cookie сессии и перенаправляет на `/` (303). При ошибке отвечает 403 со страницей «ссылка недействительна» или перенаправляет на `error_url`. Причина отказа пишется в журнал с `audit=true`: подпись, срок, повтор или домен.
+
+Часы панели и почтового сервера могут расходиться до 30 секунд.
+
+PHP:
+
+```php
+function webmail_sso_token(string $mailbox, string $key, int $ttl = 60): string {
+    $b64 = fn(string $s) => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+    $payload = 'v1.' . $b64(json_encode([
+        'sub' => $mailbox, 'exp' => time() + $ttl, 'jti' => bin2hex(random_bytes(16)),
+    ]));
+    return $payload . '.' . $b64(hash_hmac('sha256', $payload, $key, true));
+}
+// $key = trim(file_get_contents('/etc/panel/webmail-sso.key'));
+```
+
+```html
+<form method="post" action="https://mail.example.com/sso/panel" target="_blank">
+  <input type="hidden" name="token" value="<?= htmlspecialchars(webmail_sso_token($mailbox, $key)) ?>">
+  <button>Открыть почту</button>
+</form>
+```
+
+Shell (для проверки):
+
+```sh
+b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
+payload="v1.$(printf '{"sub":"%s","exp":%d,"jti":"%s"}' bob@example.com $(( $(date +%s) + 60 )) "$(openssl rand -hex 16)" | b64url)"
+sig=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$(cat /etc/webmail/panel-sso.key)" -binary | b64url)
+echo "https://mail.example.com/sso/panel?token=$payload.$sig"
+```
+
+Go: `panel.Sign(key, panel.Claims{Sub: …, Exp: …, Jti: …})`.
+
+## 4. Служебный API
+
+Все запросы — `POST` с JSON `{"mailbox": "local@domain"}` и заголовком `Authorization: Bearer <panel-api.token>`. Принимаются только с адресов из `allowed_ips`. Адрес клиента берётся с учётом `server.trusted_proxies`, как и везде в webmail.
+
+| Запрос | Когда вызывать | Ответ |
+| --- | --- | --- |
+| `/panel/v1/sessions/end` | пароль сменён в панели, ящик заблокирован или переведён на другой тариф | `{"ok":true,"ended":N}` |
+| `/panel/v1/mailboxes/delete` | ящик удалён | `{"ok":true}` |
+
+`mailboxes/delete` завершает сессии и удаляет всё, что webmail хранит о ящике: отправителей и подписи, контакты и группы, собранные адреса, шаблоны, личный словарь, настройки и подключённые внешние адресные книги. Письма на IMAP-сервере не трогает. Вызов идемпотентен.
+
+Ошибки: `401` — неверный токен, `403` — адрес или домен не разрешён, `400` — неверный JSON или ящик. Тело ошибки: `{"ok":false,"error":"…"}`.
+
+```sh
+curl -sX POST -H "Authorization: Bearer $(cat /etc/webmail/panel-api.token)" \
+  -d '{"mailbox":"bob@example.com"}' http://127.0.0.1:8080/panel/v1/sessions/end
+```
+
+Открытая вкладка с почтой после `sessions/end` получает 401 на следующем запросе и показывает форму входа. Поток новых писем закрывается в течение 25 секунд.
+
+## 5. Смена пароля после входа из панели
+
+Пользователь, вошедший из панели, мог не знать пароль ящика. Поэтому в течение `password.sso_window` (по умолчанию 10 минут) после входа он может сменить пароль в «Настройки → Пароль», не вводя текущий. Для этого должны выполняться два условия:
+
+- драйвер умеет менять пароль без текущего (`ext.PasswordCaps.SSOWithoutCurrent`);
+- у встроенных драйверов `exec` и `http` не стоит `verifies_current: true`.
+
+Драйвер получает запрос с `"sso": true` и без `current`. Остальные проверки остаются в силе: политика пароля, утечки HIBP, лимит попыток. После окна текущий пароль спрашивается как обычно.
+
+## Ограничения
+
+- Список использованных `jti` хранится в памяти процесса. С несколькими экземплярами webmail за балансировщиком одноразовость гарантирована только в пределах одного экземпляра. Срок токена (`max_ttl`) ограничивает окно повтора, но лучше держать ссылку короткой и отправлять её формой.
+- Сессии тоже живут в памяти (`session.store: memory`): после перезапуска webmail пользователям нужно снова войти из панели.

@@ -31,6 +31,7 @@ func (s *Server) prefRoutes() {
 	m.HandleFunc("POST /api/v1/messages/archive", s.authed(s.handleArchive))
 	m.HandleFunc("GET /api/v1/attachments.zip", s.authed(s.handleAttachmentsZip))
 	m.HandleFunc("POST /api/v1/messages/mdn", s.authed(s.handleMDN))
+	m.HandleFunc("POST /api/v1/messages/invite-reply", s.authed(s.handleInviteReply))
 }
 
 func (s *Server) prefs(r *http.Request) map[string]string {

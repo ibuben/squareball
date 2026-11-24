@@ -23,6 +23,10 @@ import (
 
 var ErrNotFound = errors.New("session not found")
 
+// SourcePassword — источник сессии при обычном входе по паролю; у SSO-сессий
+// источник — имя handoff адаптера.
+const SourcePassword = "password"
+
 type Session struct {
 	ID        string
 	Mailbox   string

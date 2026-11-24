@@ -10,6 +10,7 @@ import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { api } from './api'
 import { reportError, state } from './store'
+import { lang } from './i18n'
 
 export type SpellEngine = 'browser' | 'hunspell' | 'off'
 
@@ -29,8 +30,13 @@ export function spellDictionary(): string {
   return v && v !== 'off' && spellDictionaries().includes(v) ? v : ''
 }
 
-const names = (() => { try { return new Intl.DisplayNames(['ru'], { type: 'language' }) } catch { return null } })()
+const displayNames = new Map<string, Intl.DisplayNames | null>()
 export function dictionaryName(d: string): string {
+  const l = lang()
+  if (!displayNames.has(l)) {
+    try { displayNames.set(l, new Intl.DisplayNames([l], { type: 'language' })) } catch { displayNames.set(l, null) }
+  }
+  const names = displayNames.get(l)
   let n = ''
   try { n = names?.of(d.replace(/_/g, '-').split('-').slice(0, 2).join('-')) ?? '' } catch { /* нестандартное имя */ }
   return n ? n[0].toUpperCase() + n.slice(1) : d

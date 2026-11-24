@@ -4,6 +4,11 @@ export interface Address { name?: string; email: string }
 export interface Brand {
   name: string; logo_url?: string; logo_dark_url?: string; favicon_url?: string
   accent?: string; accent_dark?: string; css_vars?: Record<string, string>
+  hide_about?: boolean
+}
+export interface UIConfig {
+  brand: Brand; theme: 'light' | 'dark' | 'system'; default_domain: string
+  default_language: string; languages: string[]
 }
 export interface Me {
   mailbox: string
@@ -16,6 +21,7 @@ export interface Me {
   }
   limits: { max_upload: number; max_recipients: number }
   remote_images: 'ask' | 'always' | 'never'
+  version?: string
 }
 export interface Folder {
   name: string; display: string; delimiter: string; depth: number
@@ -36,9 +42,21 @@ export interface Message {
   uid: number; folder: string; message_id?: string; in_reply_to?: string; references?: string[]
   from: Address[]; to: Address[]; cc?: Address[]; bcc?: Address[]; reply_to?: Address[]
   subject: string; date: string; attachments: Attachment[]; flags: string[]; list_unsubscribe?: string
-  priority?: 1 | 5; mdn_to?: string; dsn?: boolean
+  priority?: 1 | 5; mdn_to?: string; dsn?: boolean; invite?: Invite
 }
-export interface MessageView { message: Message; body_html: string; body_text: string; blocked_images: number }
+export type PartStat = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
+export interface Attendee { name?: string; email: string; role?: string; partstat?: string }
+// Событие из части text/calendar письма (iTIP).
+export interface Invite {
+  part: number; method?: string; uid: string; sequence?: number; recurrence_id?: string
+  summary: string; location?: string; url?: string; start: string; end: string
+  all_day?: boolean; floating?: boolean; recurring?: boolean; status?: string
+  organizer?: Attendee; attendees: Attendee[]
+}
+export interface InviteView { self: string; attendee: boolean; is_organizer: boolean; replied: '' | PartStat; can_reply: boolean }
+export interface MessageView {
+  message: Message; body_html: string; body_text: string; blocked_images: number; invite?: InviteView | null
+}
 
 export interface Identity {
   id: number; name: string; email: string; reply_to: string; bcc: string; signature: string; is_default: boolean
@@ -116,7 +134,7 @@ const q_ = (params: Record<string, string | number | undefined>) =>
   ).toString()
 
 export const api = {
-  config: () => request<{ brand: Brand; theme: string; default_domain: string }>('GET', '/api/v1/config'),
+  config: () => request<UIConfig>('GET', '/api/v1/config'),
   me: () => request<Me>('GET', '/api/v1/auth/me'),
   login: (username: string, password: string) => request<Me>('POST', '/api/v1/auth/login', { username, password }),
   logout: () => request('POST', '/api/v1/auth/logout'),
@@ -157,6 +175,8 @@ export const api = {
   setPrefs: (p: Partial<Prefs>) => request<{ prefs: Prefs }>('PUT', '/api/v1/prefs', p),
   mdn: (folder: string, uid: number, send: boolean, auto = false) =>
     request<{ ok: boolean; sent: boolean }>('POST', '/api/v1/messages/mdn', { folder, uid, send, auto }),
+  inviteReply: (folder: string, uid: number, partstat: PartStat, comment = '') =>
+    request<{ ok: boolean; partstat: PartStat; to: string }>('POST', '/api/v1/messages/invite-reply', { folder, uid, partstat, comment }),
   zipURL: (folder: string, uid: number, name: string) => `/api/v1/attachments.zip?${q_({ folder, uid, name })}`,
   move: (folder: string, uids: number[], dest: string) =>
     request('POST', '/api/v1/messages/move', { folder, uids, dest }),
@@ -189,7 +209,7 @@ export const api = {
   groups: () => request<{ groups: Group[] }>('GET', '/api/v1/groups'),
   saveGroup: (g: Partial<Group>) => request<Group>('POST', '/api/v1/groups', g),
   deleteGroup: (id: number) => request('POST', '/api/v1/groups/delete', { id }),
-  passwordPolicy: () => request<{ policy: PasswordPolicy }>('GET', '/api/v1/account/password'),
+  passwordPolicy: () => request<{ policy: PasswordPolicy; current_required: boolean }>('GET', '/api/v1/account/password'),
   changePassword: (current: string, next: string) => request('POST', '/api/v1/account/password', { current, new: next }),
   templates: () => request<{ templates: Template[] }>('GET', '/api/v1/templates'),
   saveTemplate: (tpl: Partial<Template>) => request<Template>('POST', '/api/v1/templates', tpl),

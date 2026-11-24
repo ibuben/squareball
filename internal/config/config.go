@@ -138,7 +138,10 @@ type Identities struct {
 // Password — смена пароля ящика. driver: none | exec | http | имя адаптера.
 type Password struct {
 	Driver string `yaml:"driver"`
-	Policy struct {
+	// SSOWindow — сколько после входа из панели (SSO) можно сменить пароль,
+	// не вводя текущий: пользователь мог его и не знать. 0 — всегда спрашивать.
+	SSOWindow time.Duration `yaml:"sso_window"`
+	Policy    struct {
 		MinLength      int  `yaml:"min_length"`
 		MaxLength      int  `yaml:"max_length"`
 		RequireClasses int  `yaml:"require_classes"` // из 4: строчные, заглавные, цифры, прочие
@@ -182,6 +185,7 @@ type UI struct {
 // #rrggbb); производные оттенки (фон выделения, цвет текста на кнопке) интерфейс
 // считает сам. accent_dark — цвет для тёмной темы, по умолчанию выводится из accent.
 // css_vars — тонкая настройка: любые CSS-переменные поверх рассчитанных, в обеих темах.
+// hide_about — убрать кнопку и окно «О программе».
 type Brand struct {
 	Name         string            `yaml:"name"`
 	LogoURL      string            `yaml:"logo_url"`
@@ -193,6 +197,7 @@ type Brand struct {
 	Accent       string            `yaml:"accent"`
 	AccentDark   string            `yaml:"accent_dark"`
 	CSSVars      map[string]string `yaml:"css_vars"`
+	HideAbout    bool              `yaml:"hide_about"`
 }
 
 // BrandAsset — картинка бренда: имя в /brand/<name>, ссылка и файл из конфига.
@@ -329,6 +334,7 @@ func Defaults() *Config {
 	c.IMAP.Security = "tls"
 	c.IMAP.TLSVerify = true
 	c.IMAP.AuthMechanisms = []string{"plain", "login"}
+	c.IMAP.Impersonation.Mechanism = "sasl_plain_authzid"
 	c.IMAP.Timeout = 15 * time.Second
 	c.IMAP.Pool.MaxConnsPerSession = 3
 	c.IMAP.Pool.IdleClose = 5 * time.Minute
@@ -353,11 +359,12 @@ func Defaults() *Config {
 	c.Password.Policy.RequireClasses = 3
 	c.Password.Policy.MaxLength = 128
 	c.Password.Policy.ForbidMailbox = true
+	c.Password.SSOWindow = 10 * time.Minute
 	c.Password.Exec.Timeout = 10 * time.Second
 	c.Password.HTTP.Timeout = 10 * time.Second
 	c.Password.HTTP.TLSVerify = true
-	c.UI.DefaultLanguage = "ru"
-	c.UI.Languages = []string{"ru", "en", "uz"}
+	c.UI.DefaultLanguage = "en"
+	c.UI.Languages = []string{"en", "ru"}
 	c.UI.Theme = "system"
 	c.UI.Brand.Name = "Webmail"
 	c.UI.Attachments.MaxUpload = 25 << 20
@@ -497,6 +504,9 @@ func (c *Config) Validate() error {
 		add("ui.attachments.remote_images: must be ask, always or never")
 	}
 	c.UI.Brand.validate(add)
+	if !contains(c.UI.Languages, c.UI.DefaultLanguage) {
+		add("ui.default_language: must be one of ui.languages")
+	}
 	if !contains([]string{"light", "dark", "system"}, c.UI.Theme) {
 		add("ui.theme: must be light, dark or system")
 	}
@@ -531,6 +541,9 @@ func (c *Config) validatePassword(add func(string, ...any)) {
 	}
 	if pol.RequireClasses < 0 || pol.RequireClasses > 4 {
 		add("password.policy.require_classes: must be 0..4")
+	}
+	if p.SSOWindow < 0 || p.SSOWindow > time.Hour {
+		add("password.sso_window: must be 0..1h")
 	}
 	switch p.Driver {
 	case "none":

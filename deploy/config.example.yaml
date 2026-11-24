@@ -40,13 +40,37 @@ smtp:
 #     min_length: 10
 #     require_classes: 3
 #     check_breached: false
+#   sso_window: 10m                 # после входа из панели — без текущего пароля
+
+# Вход из панели хостинга без пароля и служебный API — docs/integration.md.
+# imap:
+#   impersonation:
+#     enabled: true
+#     master_user: webmail-master
+#     master_password_file: /etc/webmail/master.pass
+#     allowed_sources: [panel]
+#     apply_to: [smtp, sieve]
+# adapters:
+#   panel:
+#     enabled: true
+#     secret_file: /etc/webmail/panel-sso.key
+#     domains: [example.com]
+#     api:
+#       token_file: /etc/webmail/panel-api.token
 
 # Брендинг: название, логотип, favicon и цвет акцента. Картинка — ссылкой (*_url)
 # или файлом (*_file: svg/png/jpg/webp/gif/ico до 1 МиБ, сервер раздаёт его сам).
 # accent — основной цвет; оттенки выделения и цвет текста на кнопках считаются из него.
 # accent_dark — цвет для тёмной темы (по умолчанию — посветлевший accent).
 # css_vars — тонкая настройка любых CSS-переменных из web/src/styles.css, поверх расчёта.
+# hide_about: true — убрать кнопку и окно «О программе».
+# Язык интерфейса: default_language — для тех, кто ещё не выбрал язык сам (на экране
+# входа или в настройках); languages — какие языки предлагать (есть en и ru).
+# theme — тема по умолчанию: light, dark или system.
 # ui:
+#   default_language: en
+#   languages: [en, ru]
+#   theme: system
 #   brand:
 #     name: "Почта"
 #     logo_file: /etc/webmail/brand/logo.svg
@@ -55,6 +79,7 @@ smtp:
 #     accent: "#0b7a5c"
 #     accent_dark: "#3fb68f"
 #     css_vars: { "--radius": "6px" }
+#     hide_about: false
 
 # Проверка орфографии в редакторе: browser (по умолчанию) — средствами браузера;
 # hunspell — на сервере (apt install hunspell hunspell-ru hunspell-en-us),

@@ -6,6 +6,7 @@ import {
   createFolder, deleteFolder, folderParent, folderTitle, loadFolders, renameFolder, reportError, roleFolder, state,
   subscribeFolder, toast,
 } from '../../store'
+import { t } from '../../i18n'
 
 const archive = ref<Prefs['archive_structure'] | null>(null)
 onMounted(async () => {
@@ -15,7 +16,7 @@ onMounted(async () => {
 async function setArchive(v: Prefs['archive_structure']) {
   try {
     archive.value = (await api.setPrefs({ archive_structure: v })).prefs.archive_structure
-    toast('Сохранено')
+    toast(t('toast.saved'))
   } catch (e) { reportError(e) }
 }
 
@@ -55,37 +56,36 @@ async function save(f: Folder) {
   busy.value = false
 }
 async function remove(f: Folder) {
-  const sub = state.folders.some((x) => f.delimiter && x.name.startsWith(f.name + f.delimiter)) ? ' вместе с вложенными папками' : ''
-  if (confirm(`Удалить папку «${f.display}»${sub} и все письма в ней? Это нельзя отменить.`)) await deleteFolder(f)
+  const sub = state.folders.some((x) => f.delimiter && x.name.startsWith(f.name + f.delimiter)) ? t('folder.withSub') : ''
+  if (confirm(t('folder.confirmDeleteAll', { name: f.display, sub }))) await deleteFolder(f)
 }
 </script>
 
 <template>
   <section>
-    <h2>Папки</h2>
-    <p class="faint">Отписанные папки остаются на сервере, но не показываются в списке слева.
-      Системные папки (Входящие, Отправленные, Корзина и другие) переименовать и удалить нельзя.</p>
+    <h2>{{ t('set.folders') }}</h2>
+    <p class="faint">{{ t('folder.hint') }}</p>
 
     <form class="card new" @submit.prevent="create">
-      <label>Новая папка
-        <input v-model="newName" class="input" maxlength="128" placeholder="Название" data-test="folder-new-name" />
+      <label>{{ t('folder.new') }}
+        <input v-model="newName" class="input" maxlength="128" :placeholder="t('folder.namePh')" data-test="folder-new-name" />
       </label>
-      <label v-if="hasDelim">Внутри
+      <label v-if="hasDelim">{{ t('folder.inside') }}
         <select v-model="newParent" class="input">
-          <option value="">— верхний уровень —</option>
+          <option value="">{{ t('folder.topLevel') }}</option>
           <option v-for="f in state.folders" :key="f.name" :value="f.name">{{ path(f) }}</option>
         </select>
       </label>
-      <div class="actions"><button class="btn primary" :disabled="busy || !newName.trim()">Создать</button></div>
+      <div class="actions"><button class="btn primary" :disabled="busy || !newName.trim()">{{ t('folder.create') }}</button></div>
     </form>
 
     <div v-if="roleFolder('archive') && archive !== null" class="card">
-      <label>Кнопка «В архив» кладёт письма
+      <label>{{ t('folder.archiveTo') }}
         <select class="input" :value="archive" data-test="archive-structure"
                 @change="setArchive(($event.target as HTMLSelectElement).value as Prefs['archive_structure'])">
-          <option value="">в папку «{{ folderTitle(roleFolder('archive')) }}»</option>
-          <option value="year">в подпапки по годам: {{ folderTitle(roleFolder('archive')) }} / {{ new Date().getFullYear() }}</option>
-          <option value="month">в подпапки по месяцам: {{ folderTitle(roleFolder('archive')) }} / {{ new Date().getFullYear() }} / {{ String(new Date().getMonth() + 1).padStart(2, '0') }}</option>
+          <option value="">{{ t('folder.archiveFlat', { name: folderTitle(roleFolder('archive')) }) }}</option>
+          <option value="year">{{ t('folder.archiveYear', { path: `${folderTitle(roleFolder('archive'))} / ${new Date().getFullYear()}` }) }}</option>
+          <option value="month">{{ t('folder.archiveMonth', { path: `${folderTitle(roleFolder('archive'))} / ${new Date().getFullYear()} / ${String(new Date().getMonth() + 1).padStart(2, '0')}` }) }}</option>
         </select>
       </label>
     </div>
@@ -94,18 +94,18 @@ async function remove(f: Folder) {
       <div v-for="f in state.folders" :key="f.name" class="row" :data-folder="f.name">
         <template v-if="editing === f.name">
           <form class="edit" @submit.prevent="save(f)">
-            <input v-model="editName" class="input" maxlength="128" aria-label="Имя папки" @keydown.esc="editing = ''" />
-            <select v-if="hasDelim" v-model="editParent" class="input" aria-label="Расположение">
-              <option value="">— верхний уровень —</option>
+            <input v-model="editName" class="input" maxlength="128" :aria-label="t('folder.nameLabel')" @keydown.esc="editing = ''" />
+            <select v-if="hasDelim" v-model="editParent" class="input" :aria-label="t('folder.location')">
+              <option value="">{{ t('folder.topLevel') }}</option>
               <option v-for="p in parents(f)" :key="p.name" :value="p.name">{{ path(p) }}</option>
             </select>
-            <button class="btn primary" :disabled="busy || !editName.trim()">Сохранить</button>
-            <button type="button" class="btn" @click="editing = ''">Отмена</button>
+            <button class="btn primary" :disabled="busy || !editName.trim()">{{ t('common.save') }}</button>
+            <button type="button" class="btn" @click="editing = ''">{{ t('common.cancel') }}</button>
           </form>
         </template>
         <template v-else>
           <label class="check sub" :style="{ paddingLeft: `${f.depth * 18}px` }"
-                 :title="f.role ? 'Системная папка видна всегда' : 'Показывать в списке папок'">
+                 :title="t(f.role ? 'folder.systemVisible' : 'folder.showInList')">
             <input type="checkbox" :checked="f.subscribed || !!f.role" :disabled="!!f.role"
                    @change="subscribeFolder(f, ($event.target as HTMLInputElement).checked)" />
             <span class="ellipsis" :class="{ faint: !f.selectable }">{{ title(f) }}</span>
@@ -113,8 +113,8 @@ async function remove(f: Folder) {
           <span class="faint count">{{ f.selectable ? f.total : '' }}</span>
           <span class="tools">
             <template v-if="!isSystem(f)">
-              <button class="icon" title="Переименовать или перенести" aria-label="Переименовать" @click="edit(f)"><Pencil :size="15" /></button>
-              <button class="icon danger" title="Удалить" aria-label="Удалить" @click="remove(f)"><Trash2 :size="15" /></button>
+              <button class="icon" :title="t('folder.renameMove')" :aria-label="t('folder.rename')" @click="edit(f)"><Pencil :size="15" /></button>
+              <button class="icon danger" :title="t('common.delete')" :aria-label="t('common.delete')" @click="remove(f)"><Trash2 :size="15" /></button>
             </template>
           </span>
         </template>

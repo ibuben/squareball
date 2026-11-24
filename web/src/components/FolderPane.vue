@@ -63,17 +63,17 @@ function act(fn: (f: Folder) => unknown) {
 }
 
 async function newFolder(parent: Folder | null) {
-  const name = prompt(parent ? `Новая папка внутри «${folderTitle(parent)}»` : 'Новая папка')
+  const name = prompt(parent ? t('folder.newInside', { name: folderTitle(parent) }) : t('folder.new'))
   if (name?.trim()) await createFolder(parent?.name ?? '', name)
 }
 async function rename(f: Folder) {
-  const name = prompt('Новое имя папки', f.display)
+  const name = prompt(t('folder.newName'), f.display)
   if (name?.trim() && name.trim() !== f.display) await renameFolder(f, folderParent(f), name)
 }
 async function remove(f: Folder) {
-  const sub = hasChildren(f) ? ' вместе с вложенными папками' : ''
-  const n = f.total ? ` и ${f.total} писем в ней` : ''
-  if (confirm(`Удалить папку «${f.display}»${sub}${n}? Это нельзя отменить.`)) await deleteFolder(f)
+  const sub = hasChildren(f) ? t('folder.withSub') : ''
+  const n = f.total ? t('folder.withMsgs', { n: f.total }) : ''
+  if (confirm(t('folder.confirmDelete', { name: f.display, sub, n }))) await deleteFolder(f)
 }
 // Загрузка писем: меню закрывается, а папка запоминается до выбора файлов.
 const importInput = ref<HTMLInputElement>()
@@ -90,7 +90,7 @@ function onImportFiles(e: Event) {
 }
 
 async function empty(f: Folder) {
-  if (confirm(`Удалить навсегда все письма в папке «${folderTitle(f)}» (${f.total})?`)) await emptyFolder(f)
+  if (confirm(t('folder.confirmEmpty', { name: folderTitle(f), n: f.total }))) await emptyFolder(f)
 }
 </script>
 
@@ -104,8 +104,8 @@ async function empty(f: Folder) {
     <div class="scroll list">
       <template v-for="group in [special, others]" :key="group === special ? 's' : 'o'">
         <div v-if="group === others" class="sep">
-          <span>Папки</span>
-          <button class="add" title="Новая папка" aria-label="Новая папка" data-test="folder-new" @click="newFolder(null)">
+          <span>{{ t('folder.folders') }}</span>
+          <button class="add" :title="t('folder.new')" :aria-label="t('folder.new')" data-test="folder-new" @click="newFolder(null)">
             <FolderPlus :size="15" />
           </button>
         </div>
@@ -131,21 +131,21 @@ async function empty(f: Folder) {
            data-test="folder-import-input" @change="onImportFiles" />
     <div v-if="menu" ref="menuEl" class="menu" role="menu" :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
          data-test="folder-menu" @keydown.esc="closeMenu">
-      <button v-if="menu.f.delimiter" role="menuitem" @click="act(newFolder)"><FolderPlus :size="15" /> Новая подпапка</button>
+      <button v-if="menu.f.delimiter" role="menuitem" @click="act(newFolder)"><FolderPlus :size="15" /> {{ t('folder.newSub') }}</button>
       <button v-if="menu.f.selectable" role="menuitem" :disabled="!menu.f.unread" @click="act(readFolder)">
-        <CheckCheck :size="15" /> Отметить все прочитанными
+        <CheckCheck :size="15" /> {{ t('folder.markRead') }}
       </button>
       <button v-if="menu.f.role === 'trash' || menu.f.role === 'junk'" role="menuitem" :disabled="!menu.f.total" @click="act(empty)">
-        <Eraser :size="15" /> Очистить папку
+        <Eraser :size="15" /> {{ t('folder.empty') }}
       </button>
       <a v-if="menu.f.selectable" role="menuitem" class="item" :href="api.exportMboxURL(menu.f.name)" download
-         data-test="folder-export" @click="closeMenu"><Download :size="15" /> Скачать письма (mbox)</a>
+         data-test="folder-export" @click="closeMenu"><Download :size="15" /> {{ t('folder.export') }}</a>
       <button v-if="menu.f.selectable" role="menuitem" data-test="folder-import" @click="act(startImport)">
-        <Upload :size="15" /> Загрузить письма (.mbox, .eml)
+        <Upload :size="15" /> {{ t('folder.import') }}
       </button>
       <template v-if="!isSystem(menu.f)">
-        <button role="menuitem" @click="act(rename)"><Pencil :size="15" /> Переименовать</button>
-        <button role="menuitem" class="danger" @click="act(remove)"><Trash2 :size="15" /> Удалить папку</button>
+        <button role="menuitem" @click="act(rename)"><Pencil :size="15" /> {{ t('folder.rename') }}</button>
+        <button role="menuitem" class="danger" @click="act(remove)"><Trash2 :size="15" /> {{ t('folder.delete') }}</button>
       </template>
     </div>
   </nav>

@@ -8,6 +8,7 @@ import { api, ApiError, type Address } from '../api'
 import { escapeHTML, fullAddr, fullDate, replySubject, size, who, whoList } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
+import InviteCard from './InviteCard.vue'
 import {
   archiveSelected, currentFolder, deleteSelected, findSummary, moveSelected, openCompose, openDraft, openMessage, reportError, roleFolder,
   setFlag, state, toast,
@@ -113,7 +114,7 @@ async function mdn(send: boolean, auto = false) {
   try {
     await api.mdn(m.folder, m.uid, send, auto)
     mdnDone.value = new Set(mdnDone.value).add(key)
-    if (send) toast(auto ? `Отправлено уведомление о прочтении для ${m.mdn_to}` : 'Уведомление о прочтении отправлено')
+    if (send) toast(auto ? t('mdn.sentAuto', { to: m.mdn_to ?? '' }) : t('mdn.sent'))
   } catch (e) {
     if (e instanceof ApiError && e.code === 'mdn.confirm') return // остаётся вопрос
     if (e instanceof ApiError && e.code === 'mdn.not_requested') { mdnDone.value = new Set(mdnDone.value).add(key); return }
@@ -138,7 +139,7 @@ function printMessage() {
   @page{margin:16mm}
 </style></head><body>
 <h1>${escapeHTML(m.subject || t('list.nosubject'))}</h1>
-<table class="h">${row('От', whoList(m.from))}${row('Кому', whoList(m.to))}${row('Копия', whoList(m.cc ?? []))}${row('Дата', fullDate(m.date))}${row('Вложения', files.value.map((a) => a.filename).join(', '))}</table>
+<table class="h">${row(t('compose.from'), whoList(m.from))}${row(t('read.to'), whoList(m.to))}${row(t('read.cc'), whoList(m.cc ?? []))}${row(t('read.date'), fullDate(m.date))}${row(t('read.attachments'), files.value.map((a) => a.filename).join(', '))}</table>
 <hr>${state.current.body_html}</body></html>`
   const f = document.createElement('iframe')
   f.setAttribute('sandbox', 'allow-same-origin allow-modals')
@@ -181,14 +182,14 @@ defineExpose({ reply, forward })
         <button class="icon-btn" :class="{ active: summary?.flagged }" :title="t('read.flag')" :aria-label="t('read.flag')"
                 @click="setFlag([msg.uid], '\\Flagged', !summary?.flagged)"><Flag :size="17" /></button>
         <button class="icon-btn" :title="t('read.unread')" :aria-label="t('read.unread')" @click="setFlag([msg.uid], '\\Seen', false)"><MailOpen :size="17" /></button>
-        <button class="icon-btn" title="Печать" aria-label="Печать" data-test="print" @click="printMessage"><Printer :size="17" /></button>
+        <button class="icon-btn" :title="t('read.print')" :aria-label="t('read.print')" data-test="print" @click="printMessage"><Printer :size="17" /></button>
         <a class="icon-btn" :title="t('read.source')" :aria-label="t('read.source')" :href="api.rawURL(msg.folder, msg.uid)"><Code :size="17" /></a>
       </div>
 
       <div class="scroll content">
         <h1 class="subject">
-          <span v-if="msg.priority === 1" class="prio high" title="Высокая важность">!</span>
-          <ArrowDown v-else-if="msg.priority === 5" :size="16" class="prio low" aria-label="Низкая важность" />
+          <span v-if="msg.priority === 1" class="prio high" :title="t('msg.highPriority')">!</span>
+          <ArrowDown v-else-if="msg.priority === 5" :size="16" class="prio low" :aria-label="t('msg.lowPriority')" />
           {{ msg.subject || t('list.nosubject') }}
         </h1>
         <div class="from">
@@ -202,10 +203,12 @@ defineExpose({ reply, forward })
         </div>
 
         <div v-if="mdnAsk" class="banner" data-test="mdn-banner">
-          <BellRing :size="16" /> <span>{{ msg.mdn_to }} просит уведомить о прочтении письма.</span>
-          <button class="btn" @click="mdn(true)">Отправить</button>
-          <button class="btn" @click="mdn(false)">Не отправлять</button>
+          <BellRing :size="16" /> <span>{{ t('mdn.ask', { to: msg.mdn_to ?? '' }) }}</span>
+          <button class="btn" @click="mdn(true)">{{ t('mdn.send') }}</button>
+          <button class="btn" @click="mdn(false)">{{ t('mdn.dontSend') }}</button>
         </div>
+
+        <InviteCard v-if="msg.invite" :msg="msg" :inv="msg.invite" :view="state.current!.invite" />
 
         <div v-if="state.current!.blocked_images" class="banner">
           <ImageOff :size="16" /> {{ t('read.images') }}
@@ -222,7 +225,7 @@ defineExpose({ reply, forward })
           <a v-if="files.length > 1" class="file zip" data-test="zip-all"
              :href="api.zipURL(msg.folder, msg.uid, msg.subject || 'attachments')">
             <FileArchive :size="15" />
-            <span>Все вложения ZIP</span>
+            <span>{{ t('read.zipAll') }}</span>
             <Download :size="14" class="faint" />
           </a>
         </div>

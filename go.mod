@@ -3,6 +3,7 @@ module github.com/ibuben/squareball
 go 1.26.0
 
 require (
+	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6
 	github.com/emersion/go-imap/v2 v2.0.0-beta.5
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
@@ -10,6 +11,7 @@ require (
 	github.com/emersion/go-vcard v0.1.0
 	github.com/emersion/go-webdav v0.6.0
 	github.com/microcosm-cc/bluemonday v1.0.27
+	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
 	golang.org/x/text v0.44.0

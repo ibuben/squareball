@@ -13,6 +13,7 @@ import {
 } from '../spell'
 import { api } from '../api'
 import { reportError, state } from '../store'
+import { t } from '../i18n'
 
 // Редактор текста письма. Цитата исходного письма в него не попадает:
 // схема TipTap выбросила бы таблицы и стили рассылок (см. ComposeWindow).
@@ -176,18 +177,18 @@ type Btn = { icon: unknown; title: string; run: () => void; active?: () => boole
 const buttons = (): Btn[] => {
   const e = editor.value!
   return [
-    { icon: Bold, title: 'Жирный (Ctrl+B)', run: () => e.chain().focus().toggleBold().run(), active: () => e.isActive('bold') },
-    { icon: Italic, title: 'Курсив (Ctrl+I)', run: () => e.chain().focus().toggleItalic().run(), active: () => e.isActive('italic') },
-    { icon: Underline, title: 'Подчёркнутый (Ctrl+U)', run: () => e.chain().focus().toggleUnderline().run(), active: () => e.isActive('underline') },
-    { icon: Strikethrough, title: 'Зачёркнутый', run: () => e.chain().focus().toggleStrike().run(), active: () => e.isActive('strike') },
-    { icon: List, title: 'Список', run: () => e.chain().focus().toggleBulletList().run(), active: () => e.isActive('bulletList') },
-    { icon: ListOrdered, title: 'Нумерованный список', run: () => e.chain().focus().toggleOrderedList().run(), active: () => e.isActive('orderedList') },
-    { icon: Quote, title: 'Цитата', run: () => e.chain().focus().toggleBlockquote().run(), active: () => e.isActive('blockquote') },
-    { icon: LinkIcon, title: 'Ссылка', run: setLink, active: () => e.isActive('link') },
-    { icon: ImagePlus, title: 'Картинка в текст', run: () => picker.value?.click() },
-    { icon: RemoveFormatting, title: 'Очистить форматирование', run: () => e.chain().focus().unsetAllMarks().clearNodes().run() },
-    { icon: Undo2, title: 'Отменить (Ctrl+Z)', run: () => e.chain().focus().undo().run() },
-    { icon: Redo2, title: 'Повторить (Ctrl+Shift+Z)', run: () => e.chain().focus().redo().run() },
+    { icon: Bold, title: t('ed.bold'), run: () => e.chain().focus().toggleBold().run(), active: () => e.isActive('bold') },
+    { icon: Italic, title: t('ed.italic'), run: () => e.chain().focus().toggleItalic().run(), active: () => e.isActive('italic') },
+    { icon: Underline, title: t('ed.underline'), run: () => e.chain().focus().toggleUnderline().run(), active: () => e.isActive('underline') },
+    { icon: Strikethrough, title: t('ed.strike'), run: () => e.chain().focus().toggleStrike().run(), active: () => e.isActive('strike') },
+    { icon: List, title: t('ed.list'), run: () => e.chain().focus().toggleBulletList().run(), active: () => e.isActive('bulletList') },
+    { icon: ListOrdered, title: t('ed.olist'), run: () => e.chain().focus().toggleOrderedList().run(), active: () => e.isActive('orderedList') },
+    { icon: Quote, title: t('ed.quote'), run: () => e.chain().focus().toggleBlockquote().run(), active: () => e.isActive('blockquote') },
+    { icon: LinkIcon, title: t('ed.link'), run: setLink, active: () => e.isActive('link') },
+    { icon: ImagePlus, title: t('ed.image'), run: () => picker.value?.click() },
+    { icon: RemoveFormatting, title: t('ed.clear'), run: () => e.chain().focus().unsetAllMarks().clearNodes().run() },
+    { icon: Undo2, title: t('ed.undo'), run: () => e.chain().focus().undo().run() },
+    { icon: Redo2, title: t('ed.redo'), run: () => e.chain().focus().redo().run() },
   ]
 }
 
@@ -208,8 +209,8 @@ defineExpose({
       <component :is="b.icon" :size="15" />
     </button>
     <div v-if="engine !== 'off'" ref="langEl" class="lang">
-      <button type="button" class="icon-btn" :class="{ off: !spellOn() }" title="Проверка орфографии"
-              aria-label="Проверка орфографии" aria-haspopup="menu" :aria-expanded="langMenu" data-test="spell-lang"
+      <button type="button" class="icon-btn" :class="{ off: !spellOn() }" :title="t('spell.title')"
+              :aria-label="t('spell.title')" aria-haspopup="menu" :aria-expanded="langMenu" data-test="spell-lang"
               @mousedown.prevent @click="langMenu = !langMenu; spellMenu = null">
         <SpellCheck :size="15" />
       </button>
@@ -218,7 +219,7 @@ defineExpose({
           <button v-if="spellDictionaries().length > 1" type="button" role="menuitemradio"
                   :aria-checked="state.prefs.spell === '' || (state.prefs.spell !== 'off' && !spellDictionaries().includes(state.prefs.spell))"
                   @click="setSpell('')">
-            <Check :size="14" class="tick" />Все словари
+            <Check :size="14" class="tick" />{{ t('spell.allDicts') }}
           </button>
           <button v-for="d in spellDictionaries()" :key="d" type="button" role="menuitemradio" :data-dict="d"
                   :aria-checked="state.prefs.spell === d || (spellDictionaries().length === 1 && state.prefs.spell === '')"
@@ -227,10 +228,10 @@ defineExpose({
           </button>
         </template>
         <button v-else type="button" role="menuitemradio" :aria-checked="state.prefs.spell !== 'off'" @click="setSpell('')">
-          <Check :size="14" class="tick" />Проверять орфографию
+          <Check :size="14" class="tick" />{{ t('spell.on') }}
         </button>
         <button type="button" role="menuitemradio" :aria-checked="state.prefs.spell === 'off'" @click="setSpell('off')">
-          <Check :size="14" class="tick" />Не проверять
+          <Check :size="14" class="tick" />{{ t('spell.off') }}
         </button>
       </div>
     </div>
@@ -238,10 +239,10 @@ defineExpose({
   <div v-if="spellMenu" ref="spellMenuEl" class="menu" role="menu" :style="{ left: `${spellMenu.x}px`, top: `${spellMenu.y}px` }"
        data-test="spell-menu" @keydown.esc="closeMenus(); editor?.commands.focus()">
     <button v-for="s in spellMenu.w.suggestions" :key="s" type="button" role="menuitem" class="sugg" @click="replaceWord(s)">{{ s }}</button>
-    <div v-if="!spellMenu.w.suggestions.length" class="none">Нет вариантов</div>
+    <div v-if="!spellMenu.w.suggestions.length" class="none">{{ t('spell.noSugg') }}</div>
     <hr />
-    <button type="button" role="menuitem" data-test="spell-add" @click="spellAction(addToDictionary)">Добавить в словарь</button>
-    <button type="button" role="menuitem" @click="spellAction(ignoreWord)">Пропустить</button>
+    <button type="button" role="menuitem" data-test="spell-add" @click="spellAction(addToDictionary)">{{ t('spell.add') }}</button>
+    <button type="button" role="menuitem" @click="spellAction(ignoreWord)">{{ t('spell.ignore') }}</button>
   </div>
   <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
          data-test="inline-image" @change="pickImages" />

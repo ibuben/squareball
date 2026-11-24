@@ -7,6 +7,7 @@ import {
 import { api, ApiError, type Book, type BookError, type Books, type Collected, type Contact, type Group, type Labeled } from '../api'
 import Avatar from './Avatar.vue'
 import { openCompose, state, toast } from '../store'
+import { t, type Key } from '../i18n'
 
 type Source = { kind: 'all' } | { kind: 'group'; id: number } | { kind: 'collected' } | { kind: 'book'; id: number }
 
@@ -32,14 +33,7 @@ const hasBooks = computed(() => !!books.value?.enabled && (books.value.books.len
 const bookOf = (c: Contact) => books.value?.books.find((b) => b.id === c.book)
 const readonly = (c: Contact) => !!bookOf(c)?.readonly
 const writableBooks = computed(() => books.value?.books.filter((b) => !b.readonly) ?? [])
-const bookErrors: Record<Exclude<BookError, ''>, string> = {
-  auth: 'сервер не принял логин или пароль',
-  forbidden: 'адрес во внутренней сети запрещён',
-  not_found: 'книга не найдена',
-  unavailable: 'сервер недоступен',
-  too_many: 'слишком много контактов',
-}
-const errText = (e?: BookError) => (e ? bookErrors[e] : '')
+const errText = (e?: BookError) => (e ? t(`books.e.${e}` as Key) : '')
 const accountName = (id: number) => books.value?.accounts.find((a) => a.id === id)?.name ?? ''
 
 async function loadBooks() {
@@ -65,14 +59,7 @@ async function syncBooks(force = true) {
 const accountForm = ref<{ name: string; url: string; username: string; password: string } | null>(null)
 const accountError = ref('')
 const accountBusy = ref(false)
-const accountErrors: Record<string, string> = {
-  'books.auth': 'Сервер не принял логин или пароль.',
-  'books.forbidden': 'Этот адрес находится во внутренней сети — подключать его запрещено.',
-  'books.not_found': 'По этому адресу не нашлось адресных книг. Проверьте адрес: обычно это адрес сервера или ссылка на книгу из его настроек.',
-  'books.unavailable': 'Сервер не отвечает или отвечает не по протоколу CardDAV.',
-  'books.url': 'Нужен адрес вида https://сервер/…',
-  'books.limit': 'Подключено слишком много серверов.',
-}
+const ACCOUNT_ERRORS = ['books.auth', 'books.forbidden', 'books.not_found', 'books.unavailable', 'books.url', 'books.limit']
 async function addAccount() {
   const f = accountForm.value
   if (!f) return
@@ -81,21 +68,21 @@ async function addAccount() {
   try {
     books.value = await api.addBookAccount(f)
     accountForm.value = null
-    toast('Адресная книга подключена')
+    toast(t('books.connected'))
     await load()
   } catch (e) {
-    accountError.value = e instanceof ApiError ? accountErrors[e.code] ?? 'Не удалось подключить книгу' : String(e)
+    accountError.value = e instanceof ApiError ? (ACCOUNT_ERRORS.includes(e.code) ? t(e.code.replace('books.', 'books.err.') as Key) : t('books.connectFailed')) : String(e)
   } finally { accountBusy.value = false }
 }
 async function removeAccount(id: number) {
-  if (!confirm(`Отключить «${accountName(id)}»? Контакты этой книги пропадут из списка, на сервере они останутся.`)) return
+  if (!confirm(t('books.confirmRemove', { name: accountName(id) }))) return
   try {
     books.value = await api.deleteBookAccount(id)
     if (source.value.kind === 'book' && !books.value.books.some((b) => b.id === (source.value as { id: number }).id)) choose({ kind: 'all' })
     else await load()
   } catch (e) { report(e) }
 }
-const labels: Record<string, string> = { work: 'рабочий', home: 'домашний', mobile: 'мобильный', other: 'другой' }
+const labels = computed(() => Object.fromEntries(['work', 'home', 'mobile', 'other'].map((k) => [k, t(`ct.l.${k}` as Key)])) as Record<string, string>)
 
 async function loadGroups() {
   try { groups.value = (await api.groups()).groups } catch (e) { report(e) }
@@ -112,16 +99,11 @@ async function load() {
     }
   } catch (e) { report(e) }
 }
-const remoteErrors: Record<string, string> = {
-  'contacts.conflict': 'Контакт изменили на сервере. Список обновлён — повторите правку.',
-  'contacts.readonly': 'Эта адресная книга только для чтения.',
-  'contacts.remote_auth': 'Сервер адресной книги не принял логин или пароль.',
-  'contacts.remote_unavailable': 'Сервер адресной книги недоступен. Попробуйте позже.',
-  'contacts.remote_not_found': 'Контакт или книга не найдены на сервере.',
-}
+const REMOTE_ERRORS = ['contacts.conflict', 'contacts.readonly', 'contacts.remote_auth', 'contacts.remote_unavailable', 'contacts.remote_not_found']
 function errorText(e: unknown): string {
-  if (e instanceof ApiError) return remoteErrors[e.code] ?? (e.detail || 'Не удалось выполнить действие')
-  return 'Не удалось выполнить действие'
+  if (e instanceof ApiError && REMOTE_ERRORS.includes(e.code)) return t(e.code.replace('contacts.', 'ct.err.') as Key)
+  if (e instanceof ApiError && e.detail) return e.detail
+  return t('toast.error')
 }
 function report(e: unknown) {
   console.error(e)
@@ -164,7 +146,7 @@ async function save() {
     const saved = await api.saveContact(c)
     editing.value = null
     current.value = saved
-    toast('Контакт сохранён')
+    toast(t('ct.saved'))
     await Promise.all([load(), loadGroups(), refreshBooks()])
   } catch (e) {
     error.value = errorText(e)
@@ -173,10 +155,10 @@ async function save() {
 }
 
 async function removeSelected(ids: number[]) {
-  if (!ids.length || !confirm(ids.length === 1 ? 'Удалить контакт?' : `Удалить контакты (${ids.length})?`)) return
+  if (!ids.length || !confirm(ids.length === 1 ? t('ct.confirmDeleteOne') : t('ct.confirmDeleteMany', { n: ids.length }))) return
   try {
     const r = await api.deleteContacts(ids)
-    if (r.failed) toast(`Не удалось удалить: ${r.failed} (книга только для чтения или контакт изменили на сервере)`)
+    if (r.failed) toast(t('ct.deleteFailed', { n: r.failed }))
     selected.value = new Set()
     if (current.value && ids.includes(current.value.id)) current.value = null
     await Promise.all([load(), loadGroups(), refreshBooks()])
@@ -195,7 +177,7 @@ function write(list: Contact[]) {
 }
 
 async function newGroup() {
-  const name = prompt('Название группы')
+  const name = prompt(t('ct.groupName'))
   if (!name?.trim()) return
   try {
     const g = await api.saveGroup({ name: name.trim() })
@@ -204,12 +186,12 @@ async function newGroup() {
   } catch (e) { report(e) }
 }
 async function renameGroup(g: Group) {
-  const name = prompt('Новое название', g.name)
+  const name = prompt(t('ct.newName'), g.name)
   if (!name?.trim() || name === g.name) return
   try { await api.saveGroup({ id: g.id, name: name.trim() }); await loadGroups() } catch (e) { report(e) }
 }
 async function deleteGroup(g: Group) {
-  if (!confirm(`Удалить группу «${g.name}»? Контакты останутся.`)) return
+  if (!confirm(t('ct.confirmDeleteGroup', { name: g.name }))) return
   try { await api.deleteGroup(g.id); await loadGroups(); choose({ kind: 'all' }) } catch (e) { report(e) }
 }
 // Добавить выбранные контакты в группу.
@@ -217,7 +199,7 @@ async function addToGroup(gid: number) {
   const list = contacts.value.filter((c) => selected.value.has(c.id) && !c.groups.includes(gid))
   try {
     for (const c of list) await api.saveContact({ ...c, groups: [...c.groups, gid] })
-    toast(`Добавлено в группу: ${list.length}`)
+    toast(t('ct.addedToGroup', { n: list.length }))
     await Promise.all([load(), loadGroups()])
   } catch (e) { report(e) }
 }
@@ -228,12 +210,12 @@ async function importFile(e: Event) {
   if (!f) return
   try {
     const r = await api.importContacts(f)
-    toast(`Импортировано: ${r.added}${r.skipped ? `, пропущено (уже есть или без адреса): ${r.skipped}` : ''}`)
+    toast(t('ct.imported', { n: r.added }) + (r.skipped ? t('ct.skipped', { n: r.skipped }) : ''))
     await Promise.all([load(), loadGroups()])
   } catch (err) {
     toast(err instanceof ApiError && err.code === 'contacts.import_format'
-      ? 'Не удалось прочитать файл: нужен vCard (.vcf) или CSV из Outlook, Gmail, Thunderbird'
-      : 'Импорт не удался')
+      ? t('ct.importFormat')
+      : t('ct.importFailed'))
   }
 }
 
@@ -248,150 +230,150 @@ async function forgetCollected(c: Collected) {
 <template>
   <div class="contacts">
     <nav class="sources">
-      <h1>Контакты</h1>
+      <h1>{{ t('nav.contacts') }}</h1>
       <button class="src" :class="{ on: source.kind === 'all' }" @click="choose({ kind: 'all' })">
-        <BookUser :size="16" /> Все контакты
+        <BookUser :size="16" /> {{ t('ct.all') }}
       </button>
       <button v-if="hasBooks" class="src" :class="{ on: source.kind === 'book' && source.id === 0 }" data-book="0"
               @click="choose({ kind: 'book', id: 0 })">
-        <BookUser :size="16" /> Личные
+        <BookUser :size="16" /> {{ t('ct.personal') }}
       </button>
       <button class="src" :class="{ on: source.kind === 'collected' }" @click="choose({ kind: 'collected' })">
-        <History :size="16" /> Собранные адреса
+        <History :size="16" /> {{ t('ct.collected') }}
       </button>
       <template v-if="books?.enabled">
         <div class="sep row-sep">
-          <span>Адресные книги</span>
-          <button class="icon-btn mini vis" :class="{ spin: syncing }" title="Обновить с серверов" aria-label="Обновить адресные книги"
+          <span>{{ t('ct.books') }}</span>
+          <button class="icon-btn mini vis" :class="{ spin: syncing }" :title="t('ct.syncTitle')" :aria-label="t('ct.syncLabel')"
                   data-test="books-sync" :disabled="syncing" @click="syncBooks()"><RefreshCw :size="13" /></button>
         </div>
         <template v-for="a in books.accounts" :key="a.id">
           <div class="acct" :title="a.url">
             <Server :size="13" /> <span class="ellipsis">{{ a.name }}</span>
             <AlertTriangle v-if="a.error" :size="13" class="warn" :aria-label="errText(a.error)" />
-            <button v-if="!a.preset" class="icon-btn mini" :aria-label="`Отключить ${a.name}`" title="Отключить"
+            <button v-if="!a.preset" class="icon-btn mini" :aria-label="t('ct.disconnectName', { name: a.name })" :title="t('ct.disconnect')"
                     @click="removeAccount(a.id)"><X :size="13" /></button>
           </div>
           <p v-if="a.error" class="acct-err">{{ errText(a.error) }}</p>
           <button v-for="b in books.books.filter((b) => b.account === a.id)" :key="b.id" class="src"
                   :class="{ on: source.kind === 'book' && source.id === b.id }" :data-book="b.id"
-                  :title="b.error ? errText(b.error) : b.readonly ? 'Только для чтения' : ''" @click="choose({ kind: 'book', id: b.id })">
+                  :title="b.error ? errText(b.error) : b.readonly ? t('ct.readonlyTitle') : ''" @click="choose({ kind: 'book', id: b.id })">
             <Library :size="16" /> <span class="ellipsis">{{ b.name }}</span>
-            <Lock v-if="b.readonly" :size="12" class="faint" aria-label="только для чтения" />
+            <Lock v-if="b.readonly" :size="12" class="faint" :aria-label="t('ct.readonlyLower')" />
             <AlertTriangle v-if="b.error" :size="13" class="warn" />
             <span class="faint">{{ b.count }}</span>
           </button>
         </template>
         <button v-if="books.allow_user_accounts" class="src add" data-test="books-add"
                 @click="accountForm = { name: '', url: '', username: state.me?.mailbox ?? '', password: '' }; accountError = ''">
-          <Plus :size="16" /> Подключить книгу
+          <Plus :size="16" /> {{ t('ct.connectBook') }}
         </button>
       </template>
-      <div class="sep">Группы</div>
+      <div class="sep">{{ t('ct.groups') }}</div>
       <div v-for="g in groups" :key="g.id" class="src grp" :class="{ on: source.kind === 'group' && source.id === g.id }"
            @click="choose({ kind: 'group', id: g.id })">
         <Users :size="16" /> <span class="ellipsis">{{ g.name }}</span> <span class="faint">{{ g.count }}</span>
-        <button class="icon-btn mini" aria-label="Переименовать группу" @click.stop="renameGroup(g)"><Pencil :size="13" /></button>
-        <button class="icon-btn mini" aria-label="Удалить группу" @click.stop="deleteGroup(g)"><Trash2 :size="13" /></button>
+        <button class="icon-btn mini" :aria-label="t('ct.renameGroup')" @click.stop="renameGroup(g)"><Pencil :size="13" /></button>
+        <button class="icon-btn mini" :aria-label="t('ct.deleteGroup')" @click.stop="deleteGroup(g)"><Trash2 :size="13" /></button>
       </div>
-      <button class="src add" @click="newGroup"><Plus :size="16" /> Новая группа</button>
+      <button class="src add" @click="newGroup"><Plus :size="16" /> {{ t('ct.newGroup') }}</button>
     </nav>
 
     <section class="list">
       <div class="toolbar">
         <label class="search"><Search :size="15" class="faint" />
-          <input v-model="search" placeholder="Поиск по имени, адресу, телефону" @input="onSearch" />
+          <input v-model="search" :placeholder="t('ct.searchPh')" @input="onSearch" />
         </label>
       </div>
       <div v-if="source.kind !== 'collected'" class="toolbar">
-        <button class="btn primary" @click="startEdit()"><UserPlus :size="15" /> Новый контакт</button>
+        <button class="btn primary" @click="startEdit()"><UserPlus :size="15" /> {{ t('ct.new') }}</button>
         <!-- Импорт идёт в личную книгу: во внешней книге кнопку не показываем. -->
-        <button v-if="!(bookId && bookId > 0)" class="icon-btn" title="Импорт vCard или CSV в личные контакты" aria-label="Импорт"
+        <button v-if="!(bookId && bookId > 0)" class="icon-btn" :title="t('ct.importTitle')" :aria-label="t('ct.import')"
                 @click="fileInput?.click()"><Upload :size="17" /></button>
-        <a class="icon-btn" title="Экспорт в vCard" aria-label="Экспорт vCard" :href="api.exportURL('vcf', groupId)"><Download :size="17" /></a>
+        <a class="icon-btn" :title="t('ct.exportTitle')" :aria-label="t('ct.exportLabel')" :href="api.exportURL('vcf', groupId)"><Download :size="17" /></a>
         <a class="link small" :href="api.exportURL('csv', groupId)">CSV</a>
         <input ref="fileInput" type="file" accept=".vcf,.vcard,.csv,text/vcard,text/csv" hidden @change="importFile" />
       </div>
       <div v-if="selected.size" class="bulk">
-        Выбрано: {{ selected.size }}
-        <button class="btn" @click="write(contacts.filter((c) => selected.has(c.id)))"><Mail :size="14" /> Написать</button>
+        {{ t('ct.selected', { n: selected.size }) }}
+        <button class="btn" @click="write(contacts.filter((c) => selected.has(c.id)))"><Mail :size="14" /> {{ t('ct.write') }}</button>
         <select v-if="groups.length" class="input sel" @change="addToGroup(Number(($event.target as HTMLSelectElement).value)); ($event.target as HTMLSelectElement).value = ''">
-          <option value="">В группу…</option>
+          <option value="">{{ t('ct.toGroup') }}</option>
           <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
         </select>
-        <button class="icon-btn" aria-label="Удалить выбранные" @click="removeSelected([...selected])"><Trash2 :size="16" /></button>
-        <button class="icon-btn" aria-label="Снять выбор" @click="selected = new Set()"><X :size="16" /></button>
+        <button class="icon-btn" :aria-label="t('ct.deleteSelected')" @click="removeSelected([...selected])"><Trash2 :size="16" /></button>
+        <button class="icon-btn" :aria-label="t('ct.clearSelection')" @click="selected = new Set()"><X :size="16" /></button>
       </div>
 
       <div class="scroll items">
         <template v-if="source.kind === 'collected'">
-          <p class="faint hint">Адреса, на которые вы писали. Используются в подсказках при наборе адреса.</p>
+          <p class="faint hint">{{ t('ct.collectedHint') }}</p>
           <div v-for="c in collected" :key="c.email" class="item">
             <Avatar :addr="{ name: c.name, email: c.email }" :size="32" />
             <div class="main"><strong class="ellipsis">{{ c.name || c.email }}</strong><span class="faint ellipsis">{{ c.email }}</span></div>
-            <button class="icon-btn" title="Сохранить в контакты" aria-label="Сохранить в контакты" @click="saveCollected(c)"><UserPlus :size="15" /></button>
-            <button class="icon-btn" title="Забыть адрес" aria-label="Забыть адрес" @click="forgetCollected(c)"><Trash2 :size="15" /></button>
+            <button class="icon-btn" :title="t('ct.saveToContacts')" :aria-label="t('ct.saveToContacts')" @click="saveCollected(c)"><UserPlus :size="15" /></button>
+            <button class="icon-btn" :title="t('ct.forget')" :aria-label="t('ct.forget')" @click="forgetCollected(c)"><Trash2 :size="15" /></button>
           </div>
-          <p v-if="!collected.length" class="faint hint">Пока пусто.</p>
+          <p v-if="!collected.length" class="faint hint">{{ t('ct.emptyYet') }}</p>
         </template>
         <template v-else>
           <div v-for="c in contacts" :key="c.id" class="item" :class="{ on: current?.id === c.id }"
                @click="current = c; editing = null">
-            <input type="checkbox" :checked="selected.has(c.id)" :aria-label="`Выбрать ${display(c)}`" @click.stop="toggle(c.id)" />
+            <input type="checkbox" :checked="selected.has(c.id)" :aria-label="t('ct.select', { name: display(c) })" @click.stop="toggle(c.id)" />
             <Avatar :addr="{ name: display(c), email: c.emails[0]?.value ?? display(c) }" :size="32" />
             <div class="main"><strong class="ellipsis">{{ display(c) }}</strong><span class="faint ellipsis">{{ c.emails[0]?.value ?? c.org }}</span></div>
           </div>
-          <p v-if="!contacts.length" class="faint hint">{{ search ? 'Ничего не найдено.' : 'Контактов пока нет. Добавьте вручную или импортируйте vCard / CSV.' }}</p>
-          <p v-else class="faint hint">Всего: {{ total }}</p>
+          <p v-if="!contacts.length" class="faint hint">{{ t(search ? 'ct.notFound' : 'ct.none') }}</p>
+          <p v-else class="faint hint">{{ t('ct.total', { n: total }) }}</p>
         </template>
       </div>
     </section>
 
     <section class="detail scroll">
       <form v-if="editing" class="card" @submit.prevent="save">
-        <h2>{{ editing.id ? 'Изменить контакт' : 'Новый контакт' }}</h2>
-        <label v-if="!editing.id && writableBooks.length">Книга
+        <h2>{{ t(editing.id ? 'ct.edit' : 'ct.new') }}</h2>
+        <label v-if="!editing.id && writableBooks.length">{{ t('ct.book') }}
           <select v-model="editing.book" class="input" data-test="contact-book">
-            <option :value="0">Личные</option>
+            <option :value="0">{{ t('ct.personal') }}</option>
             <option v-for="b in writableBooks" :key="b.id" :value="b.id">{{ b.name }} · {{ accountName(b.account) }}</option>
           </select>
         </label>
         <div class="two">
-          <label>Имя <input v-model="editing.first_name" class="input" /></label>
-          <label>Фамилия <input v-model="editing.last_name" class="input" /></label>
+          <label>{{ t('ct.firstName') }} <input v-model="editing.first_name" class="input" /></label>
+          <label>{{ t('ct.lastName') }} <input v-model="editing.last_name" class="input" /></label>
         </div>
-        <label>Отображаемое имя <input v-model="editing.name" class="input" placeholder="по умолчанию — «Имя Фамилия»" /></label>
+        <label>{{ t('ct.displayName') }} <input v-model="editing.name" class="input" :placeholder="t('ct.displayNamePh')" /></label>
         <div class="two">
-          <label>Организация <input v-model="editing.org" class="input" /></label>
-          <label>Должность <input v-model="editing.title" class="input" /></label>
+          <label>{{ t('ct.org') }} <input v-model="editing.org" class="input" /></label>
+          <label>{{ t('ct.title') }} <input v-model="editing.title" class="input" /></label>
         </div>
-        <div class="group-label">Адреса</div>
+        <div class="group-label">{{ t('ct.emails') }}</div>
         <div v-for="(e, i) in editing.emails" :key="'e' + i" class="row">
           <input v-model="e.value" class="input" type="email" placeholder="name@example.com" />
           <select v-model="e.label" class="input sel"><option v-for="(l, k) in labels" :key="k" :value="k">{{ l }}</option></select>
-          <button type="button" class="icon-btn" aria-label="Убрать адрес" @click="editing.emails.splice(i, 1)"><X :size="15" /></button>
+          <button type="button" class="icon-btn" :aria-label="t('ct.removeEmail')" @click="editing.emails.splice(i, 1)"><X :size="15" /></button>
         </div>
-        <button type="button" class="link" @click="addRow(editing.emails, 'work')">+ адрес</button>
-        <div class="group-label">Телефоны</div>
+        <button type="button" class="link" @click="addRow(editing.emails, 'work')">{{ t('ct.addEmail') }}</button>
+        <div class="group-label">{{ t('ct.phones') }}</div>
         <div v-for="(p, i) in editing.phones" :key="'p' + i" class="row">
           <input v-model="p.value" class="input" type="tel" placeholder="+7 900 000-00-00" />
           <select v-model="p.label" class="input sel"><option v-for="(l, k) in labels" :key="k" :value="k">{{ l }}</option></select>
-          <button type="button" class="icon-btn" aria-label="Убрать телефон" @click="editing.phones.splice(i, 1)"><X :size="15" /></button>
+          <button type="button" class="icon-btn" :aria-label="t('ct.removePhone')" @click="editing.phones.splice(i, 1)"><X :size="15" /></button>
         </div>
-        <button type="button" class="link" @click="addRow(editing.phones, 'mobile')">+ телефон</button>
+        <button type="button" class="link" @click="addRow(editing.phones, 'mobile')">{{ t('ct.addPhone') }}</button>
         <template v-if="groups.length">
-          <div class="group-label">Группы</div>
+          <div class="group-label">{{ t('ct.groups') }}</div>
           <div class="checks">
             <label v-for="g in groups" :key="g.id" class="check">
               <input v-model="editing.groups" type="checkbox" :value="g.id" /> {{ g.name }}
             </label>
           </div>
         </template>
-        <label>Заметка <textarea v-model="editing.notes" class="input area" rows="3" /></label>
+        <label>{{ t('ct.notes') }} <textarea v-model="editing.notes" class="input area" rows="3" /></label>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <div class="actions">
-          <button class="btn primary">Сохранить</button>
-          <button type="button" class="btn" @click="editing = null">Отмена</button>
+          <button class="btn primary">{{ t('common.save') }}</button>
+          <button type="button" class="btn" @click="editing = null">{{ t('common.cancel') }}</button>
         </div>
       </form>
 
@@ -404,15 +386,15 @@ async function forgetCollected(c: Collected) {
           </div>
         </div>
         <div class="actions">
-          <button v-if="current.emails.length" class="btn primary" @click="write([current])"><Mail :size="15" /> Написать</button>
+          <button v-if="current.emails.length" class="btn primary" @click="write([current])"><Mail :size="15" /> {{ t('ct.write') }}</button>
           <template v-if="!readonly(current)">
-            <button class="btn" @click="startEdit(current)"><Pencil :size="15" /> Изменить</button>
-            <button class="btn" @click="removeSelected([current.id])"><Trash2 :size="15" /> Удалить</button>
+            <button class="btn" @click="startEdit(current)"><Pencil :size="15" /> {{ t('common.edit') }}</button>
+            <button class="btn" @click="removeSelected([current.id])"><Trash2 :size="15" /> {{ t('common.delete') }}</button>
           </template>
         </div>
         <div v-if="bookOf(current)" class="line faint small">
           <Library :size="15" /> {{ bookOf(current)!.name }} · {{ accountName(bookOf(current)!.account) }}
-          <template v-if="readonly(current)"> · только для чтения</template>
+          <template v-if="readonly(current)"> · {{ t('ct.readonlyLower') }}</template>
         </div>
         <div v-for="e in current.emails" :key="e.value" class="line">
           <Mail :size="15" class="faint" />
@@ -428,25 +410,24 @@ async function forgetCollected(c: Collected) {
         </div>
         <p v-if="current.notes" class="notes">{{ current.notes }}</p>
       </div>
-      <p v-else class="faint empty">Выберите контакт</p>
+      <p v-else class="faint empty">{{ t('ct.choose') }}</p>
     </section>
 
     <div v-if="accountForm" class="overlay" @mousedown.self="accountForm = null">
-      <form class="card dialog" role="dialog" aria-label="Подключить адресную книгу" data-test="books-form" @submit.prevent="addAccount"
+      <form class="card dialog" role="dialog" :aria-label="t('ct.connectTitle')" data-test="books-form" @submit.prevent="addAccount"
             @keydown.esc="accountForm = null">
-        <h2>Подключить адресную книгу</h2>
-        <p class="faint small">CardDAV: Nextcloud, SOGo, Radicale, Baïkal, iCloud и другие. Укажите адрес сервера или ссылку на книгу
-          из его настроек. Контакты синхронизируются в обе стороны; пароль хранится на сервере почты в зашифрованном виде.</p>
-        <label>Адрес <input v-model="accountForm.url" class="input" type="url" required placeholder="https://cloud.example.com/remote.php/dav" data-test="books-url" /></label>
+        <h2>{{ t('ct.connectTitle') }}</h2>
+        <p class="faint small">{{ t('ct.connectHint') }}</p>
+        <label>{{ t('ct.url') }} <input v-model="accountForm.url" class="input" type="url" required placeholder="https://cloud.example.com/remote.php/dav" data-test="books-url" /></label>
         <div class="two">
-          <label>Логин <input v-model="accountForm.username" class="input" autocomplete="username" data-test="books-user" /></label>
-          <label>Пароль <input v-model="accountForm.password" class="input" type="password" autocomplete="new-password" data-test="books-password" /></label>
+          <label>{{ t('ct.login') }} <input v-model="accountForm.username" class="input" autocomplete="username" data-test="books-user" /></label>
+          <label>{{ t('login.password') }} <input v-model="accountForm.password" class="input" type="password" autocomplete="new-password" data-test="books-password" /></label>
         </div>
-        <label>Название <input v-model="accountForm.name" class="input" placeholder="по умолчанию — имя сервера" /></label>
+        <label>{{ t('ct.name') }} <input v-model="accountForm.name" class="input" :placeholder="t('ct.namePh')" /></label>
         <p v-if="accountError" class="error" role="alert">{{ accountError }}</p>
         <div class="actions">
-          <button class="btn primary" :disabled="accountBusy">{{ accountBusy ? 'Подключение…' : 'Подключить' }}</button>
-          <button type="button" class="btn" @click="accountForm = null">Отмена</button>
+          <button class="btn primary" :disabled="accountBusy">{{ t(accountBusy ? 'ct.connecting' : 'ct.connect') }}</button>
+          <button type="button" class="btn" @click="accountForm = null">{{ t('common.cancel') }}</button>
         </div>
       </form>
     </div>

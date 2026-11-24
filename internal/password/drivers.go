@@ -61,8 +61,10 @@ type Exec struct {
 	mu  sync.Mutex // смены идут по одной: помощникам не нужно думать о гонках
 }
 
+// Драйвер, который сам текущий пароль не проверяет, без него и обходится:
+// проверка — дело ядра, а в окне после SSO ядро её пропускает.
 func (e *Exec) Capabilities() ext.PasswordCaps {
-	return ext.PasswordCaps{VerifiesCurrent: e.cfg.VerifiesCurrent}
+	return ext.PasswordCaps{VerifiesCurrent: e.cfg.VerifiesCurrent, SSOWithoutCurrent: !e.cfg.VerifiesCurrent}
 }
 
 func (e *Exec) Change(ctx context.Context, r ext.PasswordChange) error {
@@ -132,7 +134,7 @@ func NewHTTP(cfg config.PasswordHTTP, log *slog.Logger) (*HTTP, error) {
 }
 
 func (h *HTTP) Capabilities() ext.PasswordCaps {
-	return ext.PasswordCaps{VerifiesCurrent: h.cfg.VerifiesCurrent}
+	return ext.PasswordCaps{VerifiesCurrent: h.cfg.VerifiesCurrent, SSOWithoutCurrent: !h.cfg.VerifiesCurrent}
 }
 
 func (h *HTTP) Change(ctx context.Context, r ext.PasswordChange) error {
