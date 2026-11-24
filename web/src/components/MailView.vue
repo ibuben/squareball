@@ -9,13 +9,14 @@ import FolderPane from './FolderPane.vue'
 // Настройки (с редактором подписи) — отдельный чанк, грузится при первом открытии.
 const SettingsView = defineAsyncComponent(() => import('./SettingsView.vue'))
 const ContactsView = defineAsyncComponent(() => import('./ContactsView.vue'))
+const CalendarView = defineAsyncComponent(() => import('./CalendarView.vue'))
 import MessageList from './MessageList.vue'
 import ReadingPane from './ReadingPane.vue'
 import ContactPane from './ContactPane.vue'
 import ThemeToggle from './ThemeToggle.vue'
 const AboutDialog = defineAsyncComponent(() => import('./AboutDialog.vue'))
 import {
-  deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, visibleRows, openCompose, openFolder, openMessage, setMe, state,
+  deleteSelected, loadFolders, loadIdentities, loadList, loadPrefs, visibleRows, openCompose, openFolder, openMessage, setMe, state, type View,
 } from '../store'
 import { brandLogo } from '../brand'
 
@@ -49,7 +50,8 @@ function startResize(which: 'folders' | 'list', e: PointerEvent) {
 
 const columns = computed(() =>
   `${widths.value.folders}px 1px ${widths.value.list}px 1px minmax(0,1fr)${state.showContact ? ' 260px' : ''}`)
-function go(view: 'mail' | 'settings' | 'contacts') { state.view = view; menu.value = false; drawer.value = false }
+const hasCalendar = computed(() => !!state.me?.features.calendar)
+function go(view: View) { state.view = view; menu.value = false; drawer.value = false }
 
 function toggleContact() {
   state.showContact = !state.showContact
@@ -155,6 +157,7 @@ onBeforeUnmount(() => {
         </button>
         <div v-if="menu" class="menu" @mouseleave="menu = false">
           <button @click="go('contacts')"><Users :size="15" /> {{ t('nav.contacts') }}</button>
+          <button v-if="hasCalendar" @click="go('calendar')"><CalendarDays :size="15" /> {{ t('nav.calendar') }}</button>
           <button @click="go('settings')"><Settings :size="15" /> {{ t('nav.settings') }}</button>
           <!-- На узких экранах левой панели нет — её кнопки здесь. -->
           <button v-if="showAbout" class="narrow" @click="openAbout"><Info :size="15" /> {{ t('nav.about') }}</button>
@@ -167,7 +170,8 @@ onBeforeUnmount(() => {
     <nav class="rail">
       <button class="icon-btn" :class="{ active: state.view === 'mail' }" :title="t('nav.mail')" :aria-label="t('nav.mail')" @click="go('mail')"><Mail :size="20" /></button>
       <button class="icon-btn" :class="{ active: state.view === 'contacts' }" :title="t('nav.contacts')" :aria-label="t('nav.contacts')" @click="go('contacts')"><Users :size="20" /></button>
-      <button class="icon-btn" :title="t('nav.calendar')" disabled><CalendarDays :size="20" /></button>
+      <button class="icon-btn" :class="{ active: state.view === 'calendar' }" :title="t('nav.calendar')" :aria-label="t('nav.calendar')"
+              v-if="hasCalendar" data-test="nav-calendar" @click="go('calendar')"><CalendarDays :size="20" /></button>
       <span class="spacer" />
       <ThemeToggle />
       <button class="icon-btn" :class="{ active: state.view === 'settings' }" :title="t('nav.settings')" :aria-label="t('nav.settings')" @click="go('settings')"><Settings :size="20" /></button>
@@ -175,6 +179,7 @@ onBeforeUnmount(() => {
     </nav>
     <SettingsView v-if="state.view === 'settings'" />
     <ContactsView v-else-if="state.view === 'contacts'" />
+    <CalendarView v-else-if="state.view === 'calendar'" />
     <div v-else class="panes" :style="{ gridTemplateColumns: columns }">
       <FolderPane class="p-folders" @click="drawer = false" />
       <div class="scrim" @click="drawer = false" />

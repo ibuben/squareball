@@ -107,3 +107,18 @@ smtp:
 #                                     # (подставляется мастер-пароль IMAP), см. docs/integration.md
 #         readonly: false
 #         domains: []                 # пусто — все домены
+
+# Календарь CalDAV (Radicale, Nextcloud, SOGo, Baïkal). События не кэшируются:
+# интерфейс запрашивает их у сервера за показанный диапазон. См. docs/calendar.md.
+# adapters:
+#   caldav:
+#     enabled: true
+#     allow_private_networks: false
+#     presets:                        # календари для всех ящиков; те же %u/%l/%d и password, что у carddav
+#       - id: mailbox
+#         name: Календарь
+#         url: https://cloud.example.com/remote.php/dav/calendars/%u/
+#         username: "%u"
+#         password: session
+#         readonly: false
+#         domains: []

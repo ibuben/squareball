@@ -2,8 +2,8 @@
 // Карточка события из письма-приглашения (text/calendar): когда, где, кто,
 // и ответ организатору — «Принять», «Под вопросом», «Отклонить».
 import { computed, ref } from 'vue'
-import { Check, CircleHelp, Clock, Download, MapPin, MessageSquare, Repeat, UserRound, Users, X } from 'lucide-vue-next'
-import { api, type Attendee, type Invite, type InviteView, type Message, type PartStat } from '../api'
+import { CalendarMinus, CalendarPlus, Check, CircleHelp, Clock, Download, MapPin, MessageSquare, Repeat, UserRound, Users, X } from 'lucide-vue-next'
+import { api, ApiError, type Attendee, type Invite, type InviteView, type Message, type PartStat } from '../api'
 import { who } from '../format'
 import { dateLocale, t, tn, type Key } from '../i18n'
 import { findSummary, reportError, state, toast } from '../store'
@@ -88,7 +88,25 @@ async function answer(ps: PartStat) {
     commenting.value = false
     comment.value = ''
     toast(t('inv.replySent', { ps: partLabel(ps), to: r.to }))
-  } catch (e) { reportError(e) } finally { busy.value = '' }
+  } catch (e) { reportError(e); return } finally { busy.value = '' }
+  if (hasCalendar.value) await toCalendar(ps, true)
+}
+
+// Календарь: принятая встреча сохраняется, отклонённая или отменённая — убирается.
+const hasCalendar = computed(() => !!state.me?.features.calendar)
+const canSave = computed(() => hasCalendar.value && !['REPLY', 'COUNTER', 'DECLINECOUNTER', 'REFRESH'].includes(props.inv.method ?? ''))
+const saving = ref(false)
+async function toCalendar(ps: PartStat | '' = props.view?.replied ?? '', quiet = false) {
+  if (saving.value) return
+  saving.value = true
+  try {
+    const r = await api.inviteSave(props.msg.folder, props.msg.uid, ps)
+    toast(t(r.saved ? 'inv.savedToCalendar' : 'inv.removedFromCalendar'))
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'calendar.none') { if (!quiet) toast(t('inv.noCalendar')) }
+    else if (!quiet) reportError(e)
+    else toast(t('inv.calendarFailed'))
+  } finally { saving.value = false }
 }
 
 const safeURL = computed(() => (/^https?:\/\//i.test(props.inv.url ?? '') ? props.inv.url : ''))
@@ -165,6 +183,13 @@ const safeURL = computed(() => (/^https?:\/\//i.test(props.inv.url ?? '') ? prop
     </div>
     <div v-else-if="view?.is_organizer && inv.method === 'REQUEST'" class="faint note">{{ t('inv.youOrganize') }}</div>
 
+    <div v-if="canSave" class="calendar">
+      <button class="btn" :disabled="saving" data-test="invite-calendar" @click="toCalendar()">
+        <template v-if="cancelled || view?.replied === 'DECLINED'"><CalendarMinus :size="15" /> {{ t('inv.removeFromCalendar') }}</template>
+        <template v-else><CalendarPlus :size="15" /> {{ t('inv.toCalendar') }}</template>
+      </button>
+    </div>
+
     <a class="ics" :href="api.partURL(msg.folder, msg.uid, inv.part, true)"><Download :size="14" /> {{ t('inv.ics') }}</a>
   </div>
 </template>
@@ -211,6 +236,7 @@ const safeURL = computed(() => (/^https?:\/\//i.test(props.inv.url ?? '') ? prop
 .buttons { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .buttons .btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
 .comment { width: 100%; }
+.calendar { display: flex; }
 .note { font-size: 12px; }
 .ics { position: absolute; top: 12px; right: 14px; display: inline-flex; gap: 4px; align-items: center; font-size: 12px;
   color: var(--text-2); text-decoration: none; }

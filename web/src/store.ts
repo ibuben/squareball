@@ -19,6 +19,8 @@ export interface ComposeInit {
   priority?: 0 | 1 | 5; readReceipt?: boolean; dsn?: boolean
 }
 
+export type View = 'mail' | 'settings' | 'contacts' | 'calendar'
+
 interface Toast { id: number; text: string; action?: { label: string; run: () => void } }
 
 export const state = reactive({
@@ -41,7 +43,7 @@ export const state = reactive({
   config: null as UIConfig | null, // /api/v1/config: бренд для экрана входа, языки, тема по умолчанию
   dark: false, // итоговая тема с учётом system
   showContact: localStorage.getItem('wm.contact') !== '0',
-  view: 'mail' as 'mail' | 'settings' | 'contacts',
+  view: 'mail' as View,
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
   prefs: { archive_structure: '', mdn_mode: '', threads: '', spell: '' } as Prefs,
