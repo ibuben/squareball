@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import {
-  Archive, ArrowLeft, Code, Download, Flag, Forward, ImageOff, MailOpen, Paperclip, Reply, ReplyAll, ShieldAlert, Trash2,
+  Archive, ArrowLeft, Code, Download, Flag, Forward, ImageOff, MailOpen, Paperclip, Pencil, Reply, ReplyAll, ShieldAlert, Trash2,
 } from 'lucide-vue-next'
 import { api, type Address } from '../api'
 import { escapeHTML, fullAddr, fullDate, replySubject, size, who, whoList } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  deleteSelected, moveSelected, openCompose, openMessage, roleFolder, setFlag, state,
+  currentFolder, deleteSelected, moveSelected, openCompose, openDraft, openMessage, roleFolder, setFlag, state,
 } from '../store'
 
 defineEmits<{ back: [] }>()
@@ -16,6 +16,7 @@ defineEmits<{ back: [] }>()
 const frame = ref<HTMLIFrameElement>()
 const msg = computed(() => state.current?.message)
 const summary = computed(() => state.messages.find((m) => m.uid === state.currentUID))
+const isDraft = computed(() => currentFolder()?.role === 'drafts')
 const files = computed(() => (msg.value?.attachments ?? []).filter((a) => !a.inline || !a.content_id))
 
 const srcdoc = computed(() => {
@@ -104,18 +105,21 @@ defineExpose({ reply, forward })
     </div>
     <template v-else>
       <div class="toolbar">
-        <button class="icon-btn back" @click="$emit('back')"><ArrowLeft :size="18" /></button>
-        <button class="btn" @click="reply(false)"><Reply :size="15" /> <span class="lbl">{{ t('read.reply') }}</span></button>
-        <button class="btn" @click="reply(true)"><ReplyAll :size="15" /> <span class="lbl">{{ t('read.replyAll') }}</span></button>
-        <button class="btn" @click="forward"><Forward :size="15" /> <span class="lbl">{{ t('read.forward') }}</span></button>
+        <button class="icon-btn back" aria-label="back" @click="$emit('back')"><ArrowLeft :size="18" /></button>
+        <button v-if="isDraft" class="btn primary" :aria-label="t('read.continue')" :title="t('read.continue')" @click="openDraft(msg.uid)"><Pencil :size="15" /> <span class="lbl">{{ t('read.continue') }}</span></button>
+        <template v-else>
+        <button class="btn" :aria-label="t('read.reply')" :title="t('read.reply')" @click="reply(false)"><Reply :size="15" /> <span class="lbl">{{ t('read.reply') }}</span></button>
+        <button class="btn" :aria-label="t('read.replyAll')" :title="t('read.replyAll')" @click="reply(true)"><ReplyAll :size="15" /> <span class="lbl">{{ t('read.replyAll') }}</span></button>
+        <button class="btn" :aria-label="t('read.forward')" :title="t('read.forward')" @click="forward"><Forward :size="15" /> <span class="lbl">{{ t('read.forward') }}</span></button>
+        </template>
         <span class="spacer" />
         <button v-if="roleFolder('archive')" class="icon-btn" :title="t('read.archive')" @click="archive"><Archive :size="17" /></button>
         <button v-if="roleFolder('junk')" class="icon-btn" :title="t('read.junk')" @click="junk"><ShieldAlert :size="17" /></button>
-        <button class="icon-btn" :title="t('read.delete')" @click="deleteSelected"><Trash2 :size="17" /></button>
-        <button class="icon-btn" :class="{ active: summary?.flagged }" :title="t('read.flag')"
+        <button class="icon-btn" :title="t('read.delete')" :aria-label="t('read.delete')" @click="deleteSelected"><Trash2 :size="17" /></button>
+        <button class="icon-btn" :class="{ active: summary?.flagged }" :title="t('read.flag')" :aria-label="t('read.flag')"
                 @click="setFlag([msg.uid], '\\Flagged', !summary?.flagged)"><Flag :size="17" /></button>
-        <button class="icon-btn" :title="t('read.unread')" @click="setFlag([msg.uid], '\\Seen', false)"><MailOpen :size="17" /></button>
-        <a class="icon-btn" :title="t('read.source')" :href="api.rawURL(msg.folder, msg.uid)"><Code :size="17" /></a>
+        <button class="icon-btn" :title="t('read.unread')" :aria-label="t('read.unread')" @click="setFlag([msg.uid], '\\Seen', false)"><MailOpen :size="17" /></button>
+        <a class="icon-btn" :title="t('read.source')" :aria-label="t('read.source')" :href="api.rawURL(msg.folder, msg.uid)"><Code :size="17" /></a>
       </div>
 
       <div class="scroll content">

@@ -1,11 +1,16 @@
 import { reactive } from 'vue'
-import { api, ApiError, setCsrf, type Address, type Folder, type Me, type MessageView, type Summary } from './api'
+import {
+  api, ApiError, setCsrf, type Address, type Attachment, type Folder, type Me, type MessageView, type MsgRef, type Summary,
+} from './api'
 import { t } from './i18n'
 
 export interface ComposeInit {
-  to?: Address[]; cc?: Address[]; subject?: string; html?: string
+  to?: Address[]; cc?: Address[]; bcc?: Address[]; subject?: string; html?: string
   inReplyTo?: string; references?: string[]
   source?: { folder: string; uid: number; mode: 'reply' | 'forward' }
+  // Продолжение черновика: ссылка на него и его вложения.
+  draftRef?: MsgRef
+  existing?: Attachment[]
 }
 
 interface Toast { id: number; text: string; action?: { label: string; run: () => void } }
@@ -177,8 +182,27 @@ export async function setFlag(uids: number[], flag: '\\Seen' | '\\Flagged', add:
 
 let composeSeq = 0
 export function openCompose(init: ComposeInit = {}) {
+  // Один черновик — одно окно.
+  if (init.draftRef && state.composes.some((c) => c.init.draftRef?.uid === init.draftRef!.uid)) return
   state.composes.push({ id: ++composeSeq, init })
 }
+
+// Открывает черновик из папки «Черновики» в окне редактирования.
+export async function openDraft(uid: number) {
+  try {
+    const v = await api.message(state.folder, uid, true, true)
+    const m = v.message
+    openCompose({
+      to: m.to, cc: m.cc ?? [], bcc: m.bcc ?? [], subject: m.subject, html: v.body_html,
+      inReplyTo: m.in_reply_to, references: m.references,
+      draftRef: { folder: m.folder, uid: m.uid },
+      existing: m.attachments.filter((a) => !a.inline || !a.content_id),
+    })
+  } catch (e) { reportError(e) }
+}
+
+// Компоненты окон сообщают, есть ли у них несохранённые изменения.
+export const unsaved = new Set<number>()
 export function closeCompose(id: number) {
   state.composes = state.composes.filter((c) => c.id !== id)
 }

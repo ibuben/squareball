@@ -4,14 +4,21 @@ import { Mail, PenSquare } from 'lucide-vue-next'
 import { listDate, who } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
-import { openCompose, openMessage, state } from '../store'
+import { currentFolder, openCompose, openMessage, state } from '../store'
 
 // Сводка о собеседнике, как боковая панель в eM Client: карточка и переписка из текущей папки.
-const person = computed(() => state.current?.message.from[0])
+// В «Отправленных» и «Черновиках» собеседник — получатель, а не сам пользователь.
+const outgoing = computed(() => ['sent', 'drafts'].includes(currentFolder()?.role ?? ''))
+const person = computed(() => {
+  const m = state.current?.message
+  return outgoing.value ? m?.to[0] : m?.from[0]
+})
 const history = computed(() => {
   const email = person.value?.email.toLowerCase()
   if (!email) return []
-  return state.messages.filter((m) => m.from.some((a) => a.email.toLowerCase() === email)).slice(0, 12)
+  return state.messages
+    .filter((m) => (outgoing.value ? m.to : m.from).some((a) => a.email.toLowerCase() === email))
+    .slice(0, 12)
 })
 </script>
 

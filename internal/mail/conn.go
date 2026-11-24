@@ -48,11 +48,17 @@ func tlsConfig(host string, verify bool, caFile string) (*tls.Config, error) {
 
 // DialIMAP открывает соединение и выполняет вход.
 func DialIMAP(cfg *config.IMAP, cr Creds) (*imapclient.Client, error) {
+	return DialIMAPWatch(cfg, cr, nil)
+}
+
+// DialIMAPWatch — то же, с обработчиком непрошеных ответов сервера
+// (EXISTS, EXPUNGE, FETCH), нужным для IDLE.
+func DialIMAPWatch(cfg *config.IMAP, cr Creds, h *imapclient.UnilateralDataHandler) (*imapclient.Client, error) {
 	tc, err := tlsConfig(cfg.Host, cfg.TLSVerify, cfg.CAFile)
 	if err != nil {
 		return nil, err
 	}
-	opts := &imapclient.Options{TLSConfig: tc}
+	opts := &imapclient.Options{TLSConfig: tc, UnilateralDataHandler: h}
 	dialer := &net.Dialer{Timeout: cfg.Timeout}
 	conn, err := dialer.Dial("tcp", cfg.Addr())
 	if err != nil {

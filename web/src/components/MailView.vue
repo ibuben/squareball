@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CalendarDays, LogOut, Mail, Menu, Monitor, Moon, PanelRight, PenSquare, Settings, Sun, Users,
 } from 'lucide-vue-next'
@@ -73,21 +73,54 @@ function onKey(e: KeyboardEvent) {
   if (fn) { e.preventDefault(); fn() }
 }
 
-// Пока нет push через IDLE → WebSocket, обновляем счётчики и список раз в 30 секунд.
+// Обновление: «Входящие» приходят push-событиями (IMAP IDLE → SSE), остальные папки —
+// опросом. Пока поток жив, опрос редкий; если поток недоступен — раз в 30 секунд.
 let timer = 0
-async function refresh() {
-  if (document.hidden) return
+let lastPoll = 0
+let events: EventSource | null = null
+const live = ref(false)
+
+async function refresh(force = false) {
+  if (!force && document.hidden) return
+  lastPoll = Date.now()
   await loadFolders()
   if (!state.search && state.messages.length <= 50) await loadList()
 }
+
+function connectEvents() {
+  events = new EventSource('/api/v1/events')
+  events.addEventListener('ready', () => { live.value = true })
+  events.addEventListener('mailbox', async () => {
+    await loadFolders()
+    const inbox = state.folders.find((f) => f.role === 'inbox')
+    if (inbox && state.folder === inbox.name && !state.search && state.messages.length <= 50) await loadList()
+  })
+  // При обрыве EventSource переподключается сам; пока его нет — работает частый опрос.
+  events.onerror = () => { live.value = false }
+}
+
+// Число непрочитанных во «Входящих» — в заголовке вкладки.
+watch(() => state.folders.find((f) => f.role === 'inbox')?.unread ?? 0, (n) => {
+  const base = `${state.me?.mailbox} — ${state.me?.brand.name}`
+  document.title = n ? `(${n}) ${base}` : base
+})
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   await loadFolders()
   await openFolder(state.folders.find((f) => f.role === 'inbox')?.name ?? 'INBOX')
-  timer = window.setInterval(refresh, 30000)
+  connectEvents()
+  lastPoll = Date.now()
+  timer = window.setInterval(() => {
+    const every = live.value ? 120_000 : 30_000
+    if (Date.now() - lastPoll >= every) void refresh()
+  }, 10_000)
 })
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); clearInterval(timer) })
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  clearInterval(timer)
+  events?.close()
+})
 </script>
 
 <template>

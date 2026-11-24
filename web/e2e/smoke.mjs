@@ -22,21 +22,21 @@ page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('stat
 const step = (name) => console.log('✓', name)
 const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` })
 
-// Готовим данные: USER2 отправляет USER1 свежие письма через API клиента.
-async function seed() {
-  const api = await request.newContext({ baseURL: BASE })
+// USER2 отправляет USER1 письма через API клиента (данные для теста и проверка push).
+async function sendAs(subjects, withAttachment = false) {
+  const api = await request.newContext({ baseURL: BASE, extraHTTPHeaders: { Origin: BASE } })
   const login = await api.post('/api/v1/auth/login', { data: { username: USER2, password: PASS } })
   if (!login.ok()) throw new Error(`seed login: ${login.status()}`)
   const { csrf } = await login.json()
   const to = USER1.includes('@') ? USER1 : `${USER1}@test.local`
-  for (let i = 1; i <= 3; i++) {
+  for (const [i, subject] of subjects.entries()) {
     const draft = {
-      to: [{ email: to }], subject: `Письмо для e2e №${i}`,
-      html: `<p>Привет! Это письмо <b>№${i}</b>.</p><img src="https://example.com/pixel.png"><script>alert(1)</script>`,
+      to: [{ email: to }], subject,
+      html: `<p>Привет! Это письмо <b>«${subject}»</b>.</p><img src="https://example.com/pixel.png"><script>alert(1)</script>`,
     }
     const r = await api.post('/api/v1/send', {
       headers: { 'X-CSRF-Token': csrf },
-      multipart: i === 1
+      multipart: withAttachment && i === 0
         ? { draft: JSON.stringify(draft), attachments: { name: 'заметка.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') } }
         : { draft: JSON.stringify(draft) },
     })
@@ -45,6 +45,7 @@ async function seed() {
   await api.post('/api/v1/auth/logout', { headers: { 'X-CSRF-Token': csrf } })
   await api.dispose()
 }
+const seed = () => sendAs(['Письмо для e2e №1', 'Письмо для e2e №2', 'Письмо для e2e №3'], true)
 
 try {
   await seed()
@@ -100,6 +101,43 @@ try {
   await page.locator('.folder', { hasText: 'Отправленные' }).click()
   await page.locator('.item', { hasText: 'Письмо из e2e-теста' }).first().waitFor()
   step('копия в «Отправленных»')
+
+  // Черновик: автосохранение, закрытие окна, продолжение из папки, отправка.
+  const draftSubject = `Черновик e2e ${Date.now()}`
+  await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+  const dlg = page.getByRole('dialog').last()
+  await dlg.locator('.field input').last().fill(draftSubject)
+  await dlg.locator('.editor').click()
+  await page.keyboard.type('Текст черновика')
+  await dlg.locator('[data-draft-status]', { hasText: 'Сохранено в' }).waitFor({ timeout: 15000 })
+  step('черновик сохранился автоматически')
+  await dlg.locator('.chips input').first().fill(USER2)
+  await dlg.locator('.chips input').first().press('Enter')
+  await dlg.getByRole('button', { name: 'close' }).click()
+  await page.getByText('Черновик сохранён').waitFor()
+  await page.locator('.folder', { hasText: 'Черновики' }).click()
+  await page.locator('.item', { hasText: draftSubject }).click()
+  await page.getByRole('button', { name: 'Продолжить' }).click()
+  const dlg2 = page.getByRole('dialog').last()
+  if ((await dlg2.locator('.field input').last().inputValue()) !== draftSubject) throw new Error('тема черновика не восстановилась')
+  if (!(await dlg2.locator('.chip').count())) throw new Error('получатель черновика не восстановился')
+  await dlg2.getByRole('button', { name: 'Отправить' }).click()
+  await page.getByText('Письмо отправлено').last().waitFor()
+  await page.locator('.item', { hasText: draftSubject }).waitFor({ state: 'detached' })
+  step('черновик продолжен, отправлен и удалён из «Черновиков»')
+
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
+    page.locator('.folder', { hasText: 'Входящие' }).click(),
+  ])
+  await page.locator('.item').first().waitFor()
+
+  // Push: письмо от другого пользователя появляется без перезагрузки.
+  // Опрос при живом потоке идёт раз в 2 минуты, так что успеть за 10 с может только push.
+  const pushSubject = `Push e2e ${Date.now()}`
+  await sendAs([pushSubject])
+  await page.locator('.item', { hasText: pushSubject }).waitFor({ timeout: 10000 })
+  step('новое письмо пришло через IDLE без перезагрузки')
 
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),

@@ -229,3 +229,11 @@ func (m *Manager) UpdatePassword(s *Session, password string) error {
 	stored.cipherPass = ct
 	return nil
 }
+
+// Alive сообщает, существует ли ещё сессия (для долгих соединений вроде SSE).
+func (m *Manager) Alive(id string) bool {
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	m.mu.Unlock()
+	return ok && !m.expired(s, time.Now())
+}

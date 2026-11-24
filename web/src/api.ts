@@ -23,9 +23,10 @@ export interface Page { total: number; offset: number; messages: Summary[] }
 export interface Attachment {
   index: number; filename: string; content_type: string; size: number; inline: boolean; content_id?: string
 }
+export interface MsgRef { folder: string; uid: number }
 export interface Message {
-  uid: number; folder: string; message_id?: string; references?: string[]
-  from: Address[]; to: Address[]; cc?: Address[]; reply_to?: Address[]
+  uid: number; folder: string; message_id?: string; in_reply_to?: string; references?: string[]
+  from: Address[]; to: Address[]; cc?: Address[]; bcc?: Address[]; reply_to?: Address[]
   subject: string; date: string; attachments: Attachment[]; flags: string[]; list_unsubscribe?: string
 }
 export interface MessageView { message: Message; body_html: string; body_text: string; blocked_images: number }
@@ -75,8 +76,8 @@ export const api = {
   folders: () => request<{ folders: Folder[] }>('GET', '/api/v1/folders'),
   messages: (folder: string, offset = 0, limit = 50, text = '', filter = '') =>
     request<Page>('GET', `/api/v1/messages?${q({ folder, offset, limit, q: text, filter })}`),
-  message: (folder: string, uid: number, images = false) =>
-    request<MessageView>('GET', `/api/v1/message?${q({ folder, uid, images: images ? 1 : undefined })}`),
+  message: (folder: string, uid: number, images = false, peek = false) =>
+    request<MessageView>('GET', `/api/v1/message?${q({ folder, uid, images: images ? 1 : undefined, peek: peek ? 1 : undefined })}`),
   partURL: (folder: string, uid: number, index: number, download = false) =>
     `/api/v1/part?${q({ folder, uid, index, download: download ? 1 : undefined })}`,
   rawURL: (folder: string, uid: number) => `/api/v1/raw?${q({ folder, uid })}`,
@@ -87,4 +88,6 @@ export const api = {
   remove: (folder: string, uids: number[]) =>
     request<{ ok: boolean; permanent: boolean }>('POST', '/api/v1/messages/delete', { folder, uids }),
   send: (form: FormData) => request<{ ok: boolean; warning?: string }>('POST', '/api/v1/send', form),
+  saveDraft: (form: FormData) => request<{ ok: boolean; draft_ref: MsgRef }>('POST', '/api/v1/drafts', form),
+  discardDraft: (ref: MsgRef) => request('POST', '/api/v1/drafts/discard', ref),
 }

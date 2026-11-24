@@ -33,6 +33,8 @@ type Server struct {
 	trusted  []*net.IPNet
 	secure   bool // public_url https → Secure cookie
 
+	streams streamCounter
+
 	loginIP   *limiter
 	loginUser *limiter
 	sendUser  *limiter
@@ -272,6 +274,8 @@ func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
 		}
 		s.clearCookie(w)
 		writeErr(w, http.StatusUnauthorized, "auth.expired", "")
+	case errors.Is(err, mail.ErrNoDrafts):
+		writeErr(w, http.StatusConflict, "mail.no_drafts_folder", "")
 	case errors.Is(err, mail.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "mail.not_found", "")
 	case errors.As(err, &ie):

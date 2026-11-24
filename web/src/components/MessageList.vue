@@ -6,7 +6,7 @@ import { dateGroup, listDate, who } from '../format'
 import { t } from '../i18n'
 import Avatar from './Avatar.vue'
 import {
-  currentFolder, deleteSelected, folderTitle, loadList, moveSelected, openMessage, roleFolder, setFlag, state,
+  currentFolder, deleteSelected, folderTitle, loadList, moveSelected, openDraft, openMessage, roleFolder, setFlag, state,
 } from '../store'
 
 const sentLike = computed(() => ['sent', 'drafts'].includes(currentFolder()?.role ?? ''))
@@ -85,6 +85,7 @@ function onSearch() {
                  :class="{ unread: !m.seen, selected: state.selected.has(m.uid), current: m.uid === state.currentUID }"
                  draggable="true" tabindex="0"
                  @click="onClick($event, m)" @keydown.enter="openMessage(m.uid)"
+                 @dblclick="currentFolder()?.role === 'drafts' && openDraft(m.uid)"
                  @dragstart="onDragStart($event, m)">
           <Avatar :addr="sentLike ? m.to[0] : m.from[0]" :size="34" />
           <div class="main">

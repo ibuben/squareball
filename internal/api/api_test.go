@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -181,3 +182,78 @@ func TestIntegrationWithDevstand(t *testing.T) {
 		t.Fatalf("session survived logout: %d", st)
 	}
 }
+
+func (c *client) multipart(path, draft string, files map[string]string) (int, map[string]any) {
+	c.t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	mw.WriteField("draft", draft)
+	for name, body := range files {
+		fw, _ := mw.CreateFormFile("attachments", name)
+		fw.Write([]byte(body))
+	}
+	mw.Close()
+	req, _ := http.NewRequest("POST", c.base+path, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-CSRF-Token", c.csrf)
+	return c.send(req)
+}
+
+func TestIntegrationDrafts(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	ts := httptest.NewServer(newServer(t, testConfig(t)).Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "alice", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login %d", st)
+	}
+	c.csrf = me["csrf"].(string)
+
+	// 1. Черновик без получателя «Кому», но со скрытой копией и вложением.
+	st, body := c.multipart("/api/v1/drafts", `{"bcc":[{"email":"bob@test.local"}],"subject":"Черновик IT","html":"<p>v1</p>"}`,
+		map[string]string{"plan.txt": "план"})
+	if st != 200 {
+		t.Fatalf("save draft: %d %v", st, body)
+	}
+	ref := body["draft_ref"].(map[string]any)
+	folder, uid1 := ref["folder"].(string), int(ref["uid"].(float64))
+	if folder != "Drafts" || uid1 == 0 {
+		t.Fatalf("draft ref: %v", ref)
+	}
+	st, view := c.do("GET", "/api/v1/message?peek=1&folder=Drafts&uid="+itoa(uid1), nil)
+	msg := view["message"].(map[string]any)
+	if st != 200 || len(msg["bcc"].([]any)) != 1 || len(msg["attachments"].([]any)) != 1 {
+		t.Fatalf("draft content: %d %v", st, msg)
+	}
+
+	// 2. Пересохранение: вложение переносится из прежней версии, старая удаляется.
+	st, body = c.multipart("/api/v1/drafts", `{"to":[{"email":"bob@test.local"}],"subject":"Черновик IT","html":"<p>v2</p>",
+		"draft_ref":{"folder":"Drafts","uid":`+itoa(uid1)+`},"keep_attachments":[0]}`, nil)
+	if st != 200 {
+		t.Fatalf("resave: %d %v", st, body)
+	}
+	uid2 := int(body["draft_ref"].(map[string]any)["uid"].(float64))
+	if st, _ := c.do("GET", "/api/v1/message?peek=1&folder=Drafts&uid="+itoa(uid1), nil); st != 404 {
+		t.Errorf("old draft still exists: %d", st)
+	}
+	_, view = c.do("GET", "/api/v1/message?peek=1&folder=Drafts&uid="+itoa(uid2), nil)
+	if atts := view["message"].(map[string]any)["attachments"].([]any); len(atts) != 1 {
+		t.Fatalf("attachment not kept: %v", atts)
+	}
+
+	// 3. Отправка из черновика удаляет его.
+	st, body = c.multipart("/api/v1/send", `{"to":[{"email":"bob@test.local"}],"subject":"Черновик IT","html":"<p>v2</p>",
+		"draft_ref":{"folder":"Drafts","uid":`+itoa(uid2)+`},"keep_attachments":[0]}`, nil)
+	if st != 200 {
+		t.Fatalf("send: %d %v", st, body)
+	}
+	if st, _ := c.do("GET", "/api/v1/message?peek=1&folder=Drafts&uid="+itoa(uid2), nil); st != 404 {
+		t.Errorf("draft not removed after send: %d", st)
+	}
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }

@@ -27,6 +27,7 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("POST /api/v1/auth/logout", s.authed(s.handleLogout))
 	m.HandleFunc("GET /api/v1/auth/me", s.authed(s.handleMe))
 	m.HandleFunc("GET /api/v1/folders", s.authed(s.handleFolders))
+	m.HandleFunc("GET /api/v1/events", s.authed(s.handleEvents))
 	m.HandleFunc("GET /api/v1/messages", s.authed(s.handleList))
 	m.HandleFunc("GET /api/v1/message", s.authed(s.handleMessage))
 	m.HandleFunc("GET /api/v1/part", s.authed(s.handlePart))
@@ -35,6 +36,8 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("POST /api/v1/messages/move", s.authed(s.handleMove))
 	m.HandleFunc("POST /api/v1/messages/delete", s.authed(s.handleDelete))
 	m.HandleFunc("POST /api/v1/send", s.authed(s.handleSend))
+	m.HandleFunc("POST /api/v1/drafts", s.authed(s.handleSaveDraft))
+	m.HandleFunc("POST /api/v1/drafts/discard", s.authed(s.handleDiscardDraft))
 	m.HandleFunc("POST /api/v1/account/password", s.authed(s.handlePassword))
 	if static != nil {
 		m.Handle("/", static)
@@ -416,7 +419,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- отправка ------------------------------------------------------------------
+// --- отправка и черновики ------------------------------------------------------
+
+type msgRef struct {
+	Folder string `json:"folder"`
+	UID    uint32 `json:"uid"`
+}
 
 type sendReq struct {
 	To         []mail.Address `json:"to"`
@@ -429,32 +437,84 @@ type sendReq struct {
 	References []string       `json:"references"`
 	// Исходное письмо: после отправки ему ставится \Answered или $Forwarded.
 	Source *struct {
-		Folder string `json:"folder"`
-		UID    uint32 `json:"uid"`
-		Mode   string `json:"mode"` // reply | forward
+		msgRef
+		Mode string `json:"mode"` // reply | forward
 	} `json:"source"`
+	// Прежняя версия черновика: заменяется при сохранении, удаляется после отправки.
+	DraftRef *msgRef `json:"draft_ref"`
+	// Индексы вложений из DraftRef, которые остаются в письме.
+	KeepAttachments []int `json:"keep_attachments"`
 }
 
-func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
+// readCompose разбирает multipart-форму письма (поле draft + файлы attachments)
+// и подтягивает оставленные вложения из прежнего черновика.
+func (s *Server) readCompose(w http.ResponseWriter, r *http.Request, forDraft bool) (*sendReq, *mail.Draft, bool) {
 	sess := sessionFrom(r.Context())
 	maxUpload := int64(s.cfg.UI.Attachments.MaxUpload)
 	r.Body = http.MaxBytesReader(w, r.Body, maxUpload+1<<20)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
-		return
+		return nil, nil, false
 	}
 	var in sendReq
 	if err := json.Unmarshal([]byte(r.FormValue("draft")), &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid", "")
-		return
+		return nil, nil, false
 	}
 	d := &mail.Draft{
 		From: mail.Address{Email: sess.Mailbox}, To: in.To, Cc: in.Cc, Bcc: in.Bcc,
-		Subject: in.Subject, Text: in.Text, HTML: sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML,
-		InReplyTo: in.InReplyTo, References: in.References,
+		Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo, References: in.References,
+		KeepBcc: forDraft,
 	}
-	if in.HTML == "" {
-		d.HTML = ""
+	if in.HTML != "" {
+		d.HTML = sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML
+	}
+	var total int64
+	if r.MultipartForm != nil {
+		for _, fh := range r.MultipartForm.File["attachments"] {
+			total += fh.Size
+			if total > maxUpload {
+				writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
+				return nil, nil, false
+			}
+			f, err := fh.Open()
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid", "")
+				return nil, nil, false
+			}
+			data, _ := io.ReadAll(f)
+			f.Close()
+			d.Attachments = append(d.Attachments, mail.Upload{Filename: fh.Filename, ContentType: fh.Header.Get("Content-Type"), Data: data})
+		}
+	}
+	if in.DraftRef != nil && len(in.KeepAttachments) > 0 {
+		ok := s.withIMAP(w, r, func(c *imapclient.Client) error {
+			for _, idx := range in.KeepAttachments {
+				att, data, err := mail.GetPart(c, in.DraftRef.Folder, in.DraftRef.UID, idx)
+				if err != nil {
+					return err
+				}
+				total += int64(len(data))
+				d.Attachments = append(d.Attachments, mail.Upload{Filename: att.Filename, ContentType: att.ContentType, Data: data})
+			}
+			return nil
+		})
+		if !ok {
+			return nil, nil, false
+		}
+		if total > maxUpload {
+			writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
+			return nil, nil, false
+		}
+	}
+	return &in, d, true
+}
+
+func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	in, d, ok := s.readCompose(w, r, false)
+	if !ok {
+		return
 	}
 	rcpts := d.Recipients()
 	if len(rcpts) == 0 {
@@ -464,25 +524,6 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	if max := s.cfg.SMTP.RateLimit.MaxRecipients; max > 0 && len(rcpts) > max {
 		writeErr(w, http.StatusBadRequest, "send.too_many_recipients", strconv.Itoa(max))
 		return
-	}
-	if r.MultipartForm != nil {
-		var total int64
-		for _, fh := range r.MultipartForm.File["attachments"] {
-			total += fh.Size
-			if total > maxUpload {
-				writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
-				return
-			}
-			f, err := fh.Open()
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "invalid", "")
-				return
-			}
-			data, _ := io.ReadAll(f)
-			f.Close()
-			ct := fh.Header.Get("Content-Type")
-			d.Attachments = append(d.Attachments, mail.Upload{Filename: fh.Filename, ContentType: ct, Data: data})
-		}
 	}
 	if !s.sendUser.Allow(sess.Mailbox) {
 		writeErr(w, http.StatusTooManyRequests, "send.rate_limited", "")
@@ -508,14 +549,15 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit.Info("message sent", "mailbox", sess.Mailbox, "recipients", len(rcpts), "size", len(raw), "ip", s.ClientIP(r))
 
-	// Копия в «Отправленные» и флаг исходному письму. Ошибки здесь не отменяют отправку.
+	// Копия в «Отправленные», флаг исходному письму, удаление черновика.
+	// Ошибки здесь не отменяют отправку.
 	warn := ""
 	_ = s.pool.With(sess.ID, s.creds(sess), func(c *imapclient.Client) error {
 		if s.cfg.SMTP.SaveSent {
 			fs, err := s.folders(c)
 			if err == nil {
 				if sent := mail.FolderByRole(fs, mail.RoleSent); sent != "" {
-					if err := mail.Append(c, sent, raw, imap.FlagSeen); err != nil {
+					if _, err := mail.Append(c, sent, raw, imap.FlagSeen); err != nil {
 						warn = "sent_copy_failed"
 					}
 				}
@@ -528,9 +570,63 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = mail.SetFlags(c, in.Source.Folder, []uint32{in.Source.UID}, []string{flag}, true)
 		}
+		if in.DraftRef != nil && in.DraftRef.UID > 0 {
+			_ = mail.Expunge(c, in.DraftRef.Folder, []uint32{in.DraftRef.UID})
+		}
 		return nil
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": warn})
+}
+
+// handleSaveDraft кладёт черновик в «Черновики» и удаляет его прежнюю версию.
+// Получатели не обязательны. Возвращает новую ссылку на черновик.
+func (s *Server) handleSaveDraft(w http.ResponseWriter, r *http.Request) {
+	in, d, ok := s.readCompose(w, r, true)
+	if !ok {
+		return
+	}
+	raw, _, err := mail.Build(d)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	var ref msgRef
+	if s.withIMAP(w, r, func(c *imapclient.Client) error {
+		fs, err := s.folders(c)
+		if err != nil {
+			return err
+		}
+		drafts := mail.FolderByRole(fs, mail.RoleDrafts)
+		if drafts == "" {
+			return mail.ErrNoDrafts
+		}
+		uid, err := mail.Append(c, drafts, raw, imap.FlagDraft, imap.FlagSeen)
+		if err != nil {
+			return err
+		}
+		ref = msgRef{Folder: drafts, UID: uid}
+		// Старую версию удаляем только после успешной записи новой.
+		if in.DraftRef != nil && in.DraftRef.UID > 0 && in.DraftRef.UID != uid {
+			_ = mail.Expunge(c, in.DraftRef.Folder, []uint32{in.DraftRef.UID})
+		}
+		return nil
+	}) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "draft_ref": ref})
+	}
+}
+
+// handleDiscardDraft удаляет черновик навсегда (как «Удалить черновик» в Roundcube).
+func (s *Server) handleDiscardDraft(w http.ResponseWriter, r *http.Request) {
+	var in msgRef
+	if err := readJSON(r, &in); err != nil || in.Folder == "" || in.UID == 0 {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return
+	}
+	if s.withIMAP(w, r, func(c *imapclient.Client) error {
+		return mail.Expunge(c, in.Folder, []uint32{in.UID})
+	}) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
 }
 
 // --- смена пароля ------------------------------------------------------------------

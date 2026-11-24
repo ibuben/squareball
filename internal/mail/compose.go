@@ -29,6 +29,7 @@ type Draft struct {
 	References  []string
 	Attachments []Upload
 	Hostname    string // для Message-ID
+	KeepBcc     bool   // писать Bcc в заголовки — только для черновиков
 }
 
 // Recipients — адреса конверта (To + Cc + Bcc) без повторов.
@@ -69,7 +70,7 @@ func HTMLToText(s string) string {
 	return strings.TrimSpace(reSpace.ReplaceAllString(s, "\n\n"))
 }
 
-// Build собирает RFC 5322 сообщение. Bcc в заголовки не попадает.
+// Build собирает RFC 5322 сообщение. Bcc в заголовки попадает только при KeepBcc.
 func Build(d *Draft) ([]byte, string, error) {
 	if d.From.Email == "" {
 		return nil, "", errors.New("from is required")
@@ -82,6 +83,9 @@ func Build(d *Draft) ([]byte, string, error) {
 	}
 	if len(d.Cc) > 0 {
 		h.SetAddressList("Cc", toMail(d.Cc))
+	}
+	if d.KeepBcc && len(d.Bcc) > 0 {
+		h.SetAddressList("Bcc", toMail(d.Bcc))
 	}
 	h.SetSubject(d.Subject)
 	host := d.Hostname

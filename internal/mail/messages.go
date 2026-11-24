@@ -16,7 +16,10 @@ import (
 	gomail "github.com/emersion/go-message/mail"
 )
 
-var ErrNotFound = errors.New("message not found")
+var (
+	ErrNotFound = errors.New("message not found")
+	ErrNoDrafts = errors.New("drafts folder not found")
+)
 
 type Address struct {
 	Name  string `json:"name,omitempty"`
@@ -192,10 +195,12 @@ type Message struct {
 	UID         uint32       `json:"uid"`
 	Folder      string       `json:"folder"`
 	MessageID   string       `json:"message_id,omitempty"`
+	InReplyTo   string       `json:"in_reply_to,omitempty"`
 	References  []string     `json:"references,omitempty"`
 	From        []Address    `json:"from"`
 	To          []Address    `json:"to"`
 	Cc          []Address    `json:"cc,omitempty"`
+	Bcc         []Address    `json:"bcc,omitempty"` // есть только в черновиках и «Отправленных» некоторых клиентов
 	ReplyTo     []Address    `json:"reply_to,omitempty"`
 	Subject     string       `json:"subject"`
 	Date        time.Time    `json:"date"`
@@ -328,6 +333,10 @@ func GetMessage(c *imapclient.Client, folder string, uid uint32, markSeen bool) 
 		m.Date, _ = hdr.Date()
 		m.MessageID, _ = hdr.MessageID()
 		m.References, _ = hdr.MsgIDList("References")
+		if irt, _ := hdr.MsgIDList("In-Reply-To"); len(irt) > 0 {
+			m.InReplyTo = irt[0]
+		}
+		m.Bcc = mailAddrs(hdr, "Bcc")
 		m.From = mailAddrs(hdr, "From")
 		m.To = mailAddrs(hdr, "To")
 		m.Cc = mailAddrs(hdr, "Cc")
@@ -440,15 +449,19 @@ func Expunge(c *imapclient.Client, folder string, uids []uint32) error {
 	return c.Expunge().Close()
 }
 
-// Append кладёт письмо в папку (Sent, Drafts).
-func Append(c *imapclient.Client, folder string, raw []byte, flags ...imap.Flag) error {
+// Append кладёт письмо в папку (Sent, Drafts) и возвращает его UID,
+// если сервер поддерживает UIDPLUS (иначе 0).
+func Append(c *imapclient.Client, folder string, raw []byte, flags ...imap.Flag) (uint32, error) {
 	cmd := c.Append(folder, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: time.Now()})
 	if _, err := cmd.Write(raw); err != nil {
-		return err
+		return 0, err
 	}
 	if err := cmd.Close(); err != nil {
-		return err
+		return 0, err
 	}
-	_, err := cmd.Wait()
-	return err
+	data, err := cmd.Wait()
+	if err != nil {
+		return 0, err
+	}
+	return uint32(data.UID), nil
 }

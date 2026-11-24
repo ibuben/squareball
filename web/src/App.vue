@@ -5,13 +5,16 @@ import { t } from './i18n'
 import LoginView from './components/LoginView.vue'
 import MailView from './components/MailView.vue'
 import ComposeWindow from './components/ComposeWindow.vue'
-import { applyTheme, boot, setMe, state, toast } from './store'
+import { applyTheme, boot, setMe, state, toast, unsaved } from './store'
 
 setUnauthorizedHandler(() => {
   if (state.me) toast(t('toast.sessionExpired'))
   state.composes = []
   setMe(null)
 })
+
+// Несохранённый черновик — предупреждение при закрытии вкладки.
+window.addEventListener('beforeunload', (e) => { if (unsaved.size) e.preventDefault() })
 
 onMounted(() => {
   applyTheme()
