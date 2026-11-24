@@ -91,17 +91,22 @@ func (s *Server) handleImageProxy(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, netguard.ErrPrivate) {
 			status = http.StatusForbidden
 		}
+		if r.Context().Err() == nil {
+			s.log.Warn("image proxy: fetch failed", "host", pu.Host, "err", err)
+		}
 		w.WriteHeader(status)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		s.log.Warn("image proxy: upstream status", "host", pu.Host, "status", resp.StatusCode)
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
 	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	// SVG может содержать скрипты при открытии по прямой ссылке — не отдаём.
 	if !strings.HasPrefix(ct, "image/") || strings.Contains(ct, "svg") {
+		s.log.Info("image proxy: not an image", "host", pu.Host, "type", ct)
 		w.WriteHeader(http.StatusUnsupportedMediaType)
 		return
 	}
