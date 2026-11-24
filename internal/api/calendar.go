@@ -43,12 +43,14 @@ func (s *Server) calSrc() ext.CalendarSource {
 
 // userCal — календарь ящика с учётными данными.
 type userCal struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Preset   string `json:"preset"`
-	ReadOnly bool   `json:"readonly"`
-	URL      string `json:"-"`
-	acc      ext.ContactAccount
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Preset string `json:"preset"`
+	// PresetName — заголовок группы календарей пресета в списке.
+	PresetName string `json:"preset_name"`
+	ReadOnly   bool   `json:"readonly"`
+	URL        string `json:"-"`
+	acc        ext.ContactAccount
 }
 
 type calListEntry struct {
@@ -128,7 +130,8 @@ func (s *Server) calendars(r *http.Request, src ext.CalendarSource, fresh bool) 
 			s.calLists.put(key, list)
 		}
 		for _, c := range list {
-			out = append(out, userCal{ID: calID(p.ID, c.URL), Name: c.Name, Preset: p.ID, ReadOnly: p.ReadOnly || c.ReadOnly, URL: c.URL, acc: acc})
+			ro := p.ReadOnly || c.ReadOnly || p.CanWrite != nil && !p.CanWrite(c.URL)
+			out = append(out, userCal{ID: calID(p.ID, c.URL), Name: c.Name, Preset: p.ID, PresetName: p.Name, ReadOnly: ro, URL: c.URL, acc: acc})
 		}
 	}
 	return out, errs
@@ -264,7 +267,9 @@ func (s *Server) handleCalendarEvent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "calendar.invalid", "")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"cal": c.ID, "href": o.Href, "etag": o.ETag, "readonly": c.ReadOnly, "event": ev})
+	// foreign — встречу организует не ящик: участников меняет только организатор.
+	_, _, foreign := s.meetingRole(r, sessionFrom(r.Context()), o.ICS)
+	writeJSON(w, http.StatusOK, map[string]any{"cal": c.ID, "href": o.Href, "etag": o.ETag, "readonly": c.ReadOnly, "foreign": foreign, "event": ev})
 }
 
 func (s *Server) handleSaveCalendarEvent(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +283,8 @@ func (s *Server) handleSaveCalendarEvent(w http.ResponseWriter, r *http.Request)
 		Href  string         `json:"href"`
 		ETag  string         `json:"etag"`
 		Event calendar.Event `json:"event"`
+		// Notify — разослать участникам приглашение или изменения.
+		Notify bool `json:"notify"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid", "")
@@ -307,6 +314,14 @@ func (s *Server) handleSaveCalendarEvent(w http.ResponseWriter, r *http.Request)
 	} else {
 		in.Event.UID = ""
 	}
+	sess := sessionFrom(r.Context())
+	from, before, foreign := s.meetingRole(r, sess, orig)
+	in.Event.Organizer = nil
+	if foreign {
+		in.Event.Attendees = nil // участников чужой встречи меняет её организатор
+	} else {
+		in.Event.Organizer = &calendar.Person{Name: from.Name, Email: from.Email}
+	}
 	ics, err := calendar.Build(orig, in.Event, time.Now())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "calendar.invalid", "")
@@ -317,7 +332,16 @@ func (s *Server) handleSaveCalendarEvent(w http.ResponseWriter, r *http.Request)
 		s.calError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cal": c.ID, "href": href, "etag": etag})
+	out := map[string]any{"ok": true, "cal": c.ID, "href": href, "etag": etag}
+	if in.Notify && !foreign {
+		n, err := s.notifySaved(r, sess, from, ics, before)
+		out["sent"] = n
+		if err != nil {
+			s.log.Warn("meeting notify", "mailbox", sess.Mailbox, "err", err)
+			out["notify_error"] = notifyErrCode(err)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleDeleteCalendarEvent(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +356,7 @@ func (s *Server) handleDeleteCalendarEvent(w http.ResponseWriter, r *http.Reques
 		ETag         string `json:"etag"`
 		UID          string `json:"uid"`
 		RecurrenceID string `json:"recurrence_id"` // только это вхождение
+		Notify       bool   `json:"notify"`        // разослать участникам отмену
 	}
 	if err := readJSON(r, &in); err != nil || in.Href == "" {
 		writeErr(w, http.StatusBadRequest, "invalid", "")
@@ -346,12 +371,39 @@ func (s *Server) handleDeleteCalendarEvent(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusForbidden, "calendar.readonly", "")
 		return
 	}
+	sess := sessionFrom(r.Context())
+	out := map[string]any{"ok": true}
+	// notify отправляет отмену по объекту ics, если ящик — организатор встречи.
+	notify := func(ics []byte, rid string) {
+		if !in.Notify {
+			return
+		}
+		from, _, foreign := s.meetingRole(r, sess, ics)
+		if foreign {
+			return
+		}
+		n, err := s.notifyCancelled(r, sess, from, ics, rid)
+		out["sent"] = n
+		if err != nil {
+			s.log.Warn("meeting cancel notify", "mailbox", sess.Mailbox, "err", err)
+			out["notify_error"] = notifyErrCode(err)
+		}
+	}
 	if in.RecurrenceID == "" {
+		var orig []byte
+		if in.Notify { // отмену собираем из объекта, пока он есть
+			if o, err := src.GetObject(r.Context(), c.acc, c.URL, in.Href); err == nil && (in.ETag == "" || o.ETag == "" || o.ETag == in.ETag) {
+				orig = o.ICS
+			}
+		}
 		if err := src.DeleteObject(r.Context(), c.acc, c.URL, in.Href, in.ETag); err != nil && !errors.Is(err, ext.ErrContactNotFound) {
 			s.calError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		if orig != nil {
+			notify(orig, "")
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	o, err := src.GetObject(r.Context(), c.acc, c.URL, in.Href)
@@ -368,7 +420,8 @@ func (s *Server) handleDeleteCalendarEvent(w http.ResponseWriter, r *http.Reques
 		s.calError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	notify(ics, in.RecurrenceID)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // defaultCalendar — куда сохранять приглашения: первый календарь с правом записи.
@@ -412,7 +465,11 @@ func (s *Server) handleInviteSave(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	if m.Invite == nil || len(m.InviteICS) == 0 || m.Invite.Method == "REPLY" || m.Invite.Method == "COUNTER" {
+	if m.Invite != nil && len(m.InviteICS) > 0 && m.Invite.Method == "REPLY" {
+		s.inviteSaveReply(w, r, src, m)
+		return
+	}
+	if m.Invite == nil || len(m.InviteICS) == 0 || m.Invite.Method == "COUNTER" {
 		writeErr(w, http.StatusConflict, "invite.no_save", "")
 		return
 	}
@@ -458,6 +515,26 @@ func (s *Server) handleInviteSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "saved": !remove, "cal": c.ID})
+}
+
+// inviteSaveReply записывает ответ участника во встречу, которую организует
+// ящик. Ответ принимается только от того участника, который его прислал.
+func (s *Server) inviteSaveReply(w http.ResponseWriter, r *http.Request, src ext.CalendarSource, m *mail.Message) {
+	if v := s.inviteView(r, m); v == nil || v["is_organizer"] != true || len(m.From) == 0 || len(m.Invite.Attendees) == 0 ||
+		!strings.EqualFold(m.From[0].Email, m.Invite.Attendees[0].Email) {
+		writeErr(w, http.StatusConflict, "invite.no_save", "")
+		return
+	}
+	found, updated, err := s.applyReply(r, src, m)
+	if err != nil {
+		s.calError(w, err)
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "calendar.event_not_found", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "saved": true, "updated": updated})
 }
 
 // calError отвечает на ошибку календарного сервера.

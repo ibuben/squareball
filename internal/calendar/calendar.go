@@ -292,6 +292,10 @@ type Event struct {
 	TZ          string    `json:"tz,omitempty"`      // IANA-пояс события; пусто — UTC
 	RRule       string    `json:"rrule,omitempty"`   // FREQ=WEEKLY;COUNT=10… без "RRULE:"
 	Recurring   bool      `json:"recurring,omitempty"`
+	// Organizer ставит сервер (адрес ящика), от клиента не принимается.
+	Organizer *Person `json:"organizer,omitempty"`
+	// Attendees: nil — участников не менять (поле не пришло), пустой список — убрать всех.
+	Attendees []Person `json:"attendees,omitempty"`
 }
 
 // Validate проверяет и нормализует поля формы.
@@ -314,6 +318,13 @@ func (e *Event) Validate() error {
 		if _, err := time.LoadLocation(e.TZ); err != nil || e.TZ == "Local" {
 			return ErrInvalid
 		}
+	}
+	if e.Attendees != nil {
+		list, err := normPeople(e.Attendees)
+		if err != nil {
+			return err
+		}
+		e.Attendees = list
 	}
 	e.RRule = strings.TrimPrefix(strings.TrimSpace(e.RRule), "RRULE:")
 	if e.RRule != "" {
@@ -358,6 +369,7 @@ func FormEvent(ics []byte) (Event, error) {
 		e.RRule = p.Value
 	}
 	e.Recurring = e.RRule != "" || m.Props.Get(ical.PropRecurrenceDates) != nil
+	e.Organizer, e.Attendees = people(m)
 	return e, nil
 }
 
@@ -397,6 +409,7 @@ func Build(orig []byte, e Event, now time.Time) ([]byte, error) {
 		}
 		ev.Props.SetText(ical.PropUID, e.UID)
 		ev.Props.SetDateTime(ical.PropCreated, now.UTC())
+		ev.Props.Set(seqProp(0))
 		cal.Children = append(cal.Children, ev)
 	} else {
 		var err error
@@ -406,12 +419,11 @@ func Build(orig []byte, e Event, now time.Time) ([]byte, error) {
 		if ev = master(cal, e.UID); ev == nil {
 			return nil, ErrNotFound
 		}
-		if p := ev.Props.Get(ical.PropSequence); p != nil {
-			n, _ := p.Int()
-			seq := ical.NewProp(ical.PropSequence)
-			seq.Value = itoa(n + 1)
-			ev.Props.Set(seq)
-		}
+		// Участники сравнивают SEQUENCE: каждое изменение встречи — новая версия.
+		ev.Props.Set(seqProp(sequence(ev) + 1))
+	}
+	if e.Attendees != nil {
+		setPeople(ev, e.Organizer, e.Attendees)
 	}
 	setText(ev, ical.PropSummary, e.Summary)
 	setText(ev, ical.PropLocation, strings.TrimSpace(e.Location))
@@ -509,6 +521,7 @@ func DeleteOccurrence(orig []byte, uid, recurrenceID string, now time.Time) ([]b
 		}
 	}
 	m.Props.Add(timeProp(ical.PropExceptionDates, t, allDay, tz))
+	m.Props.Set(seqProp(sequence(m) + 1))
 	m.Props.SetDateTime(ical.PropDateTimeStamp, now.UTC())
 	kept := cal.Children[:0]
 	for _, c := range cal.Children {

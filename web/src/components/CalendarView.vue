@@ -2,7 +2,7 @@
 // Календарь: месяц, неделя и список. События запрашиваются у сервера за
 // показанный диапазон; сервер ходит в CalDAV и разворачивает повторения.
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { AlertTriangle, ChevronLeft, ChevronRight, MapPin, Plus, RefreshCw, Repeat } from 'lucide-vue-next'
+import { AlertTriangle, ChevronLeft, ChevronRight, Lock, MapPin, Plus, RefreshCw, Repeat } from 'lucide-vue-next'
 import { api, type CalendarInfo, type CalError } from '../api'
 import {
   addDays, browserTZ, calColor, isoLocal, layoutDay, longEvent, onDay, sameDay, startOfDay, startOfMonth, startOfWeek,
@@ -162,6 +162,8 @@ const firstError = computed(() => Object.values(calErrors.value).find(Boolean) a
 
 // --- окно события ---
 const dialog = ref<{ occ?: Occ; start?: Date; allDay?: boolean } | null>(null)
+// Заголовок группы календарей пресета: общие календари домена — по-своему.
+const groupName = (c: CalendarInfo) => (c.preset === 'shared' ? t('cal.shared') : c.preset_name || c.preset)
 const canCreate = computed(() => calendars.value.some((c) => !c.readonly))
 function create(start?: Date, allDay = false) {
   if (!canCreate.value) return
@@ -186,12 +188,16 @@ function onSaved() { dialog.value = null; void load() }
         <button class="icon-btn mini" :class="{ spin: loading }" :title="t('cal.refresh')" :aria-label="t('cal.refresh')" @click="reload">
           <RefreshCw :size="13" /></button>
       </div>
-      <label v-for="c in calendars" :key="c.id" class="calrow">
-        <input type="checkbox" :checked="!hidden.has(c.id)" :style="{ accentColor: colorOf[c.id] }" @change="toggle(c.id)">
-        <span class="dot" :style="{ background: colorOf[c.id] }" />
-        <span class="ellipsis">{{ c.name }}</span>
-        <AlertTriangle v-if="calErrors[c.id]" :size="13" class="warn" :title="errText(calErrors[c.id])" />
-      </label>
+      <template v-for="(c, i) in calendars" :key="c.id">
+        <div v-if="i > 0 && c.preset !== calendars[i - 1].preset" class="sep group" data-test="cal-group">{{ groupName(c) }}</div>
+        <label class="calrow">
+          <input type="checkbox" :checked="!hidden.has(c.id)" :style="{ accentColor: colorOf[c.id] }" @change="toggle(c.id)">
+          <span class="dot" :style="{ background: colorOf[c.id] }" />
+          <span class="ellipsis">{{ c.name }}</span>
+          <Lock v-if="c.readonly" :size="12" class="faint" :title="t('cal.readonly')" />
+          <AlertTriangle v-if="calErrors[c.id]" :size="13" class="warn" :title="errText(calErrors[c.id])" />
+        </label>
+      </template>
       <p v-if="!calendars.length && !firstError" class="faint small">{{ enabled ? t('cal.none') : t('cal.disabled') }}</p>
     </aside>
 
@@ -290,6 +296,7 @@ h1 { font-size: 17px; margin: 0 8px 10px; }
 .mini { width: 24px; height: 24px; }
 .spin :deep(svg) { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.sep.group { margin-top: 14px; }
 .calrow { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 10px; border-radius: 6px; cursor: pointer; }
 .calrow:hover { background: var(--hover); }
 .calrow .ellipsis { flex: 1; }

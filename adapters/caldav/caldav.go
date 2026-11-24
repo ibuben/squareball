@@ -83,7 +83,7 @@ func (a *Adapter) CalendarPresets(mailbox string) []ext.CalendarPreset {
 	var out []ext.CalendarPreset
 	for _, p := range a.cfg.Presets {
 		if acc, ok := p.Account(mailbox); ok {
-			out = append(out, ext.CalendarPreset{ID: p.ID, Name: p.Name, ReadOnly: p.ReadOnly, Account: acc})
+			out = append(out, ext.CalendarPreset{ID: p.ID, Name: p.Name, ReadOnly: p.ReadOnly, Account: acc, CanWrite: p.CanWrite(mailbox)})
 		}
 	}
 	return out
@@ -105,6 +105,20 @@ func (a *Adapter) DiscoverCalendars(ctx context.Context, acc ext.ContactAccount)
 		return nil, err
 	}
 	var cals []caldav.Calendar
+	if acc.Collection {
+		list, err := c.FindCalendars(ctx, base.Path)
+		if err != nil {
+			if err = dav.MapErr(err); errors.Is(err, ext.ErrContactNotFound) {
+				return []ext.RemoteCalendar{}, nil // набор ещё не создан
+			}
+			return nil, err
+		}
+		cals = withEvents(list)
+		if len(cals) == 0 {
+			return []ext.RemoteCalendar{}, nil
+		}
+		return remoteCalendars(base, cals), nil
+	}
 	var firstErr error
 	try := func(p string) bool {
 		list, err := c.FindCalendars(ctx, p)
@@ -135,6 +149,10 @@ func (a *Adapter) DiscoverCalendars(ctx context.Context, acc ext.ContactAccount)
 		}
 		return nil, ext.ErrContactNotFound
 	}
+	return remoteCalendars(base, cals), nil
+}
+
+func remoteCalendars(base *url.URL, cals []caldav.Calendar) []ext.RemoteCalendar {
 	out := make([]ext.RemoteCalendar, 0, len(cals))
 	for _, cl := range cals {
 		if len(out) == maxCalendars {
@@ -147,7 +165,7 @@ func (a *Adapter) DiscoverCalendars(ctx context.Context, acc ext.ContactAccount)
 		}
 		out = append(out, ext.RemoteCalendar{URL: u.String(), Name: name})
 	}
-	return out, nil
+	return out
 }
 
 // withEvents оставляет календари, в которых могут быть события (без набора

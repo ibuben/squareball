@@ -26,6 +26,35 @@ func TestPresets(t *testing.T) {
 	}
 }
 
+func TestSharedPreset(t *testing.T) {
+	a := &Adapter{cfg: Config{Presets: []dav.Preset{{ID: "shared", URL: "http://127.0.0.1:5232/domain/%d/", Username: "%u", Password: "session",
+		Collection: true, Domains: []string{"ex.uz"},
+		Writers: map[string][]string{"domain/ex.uz/team": {"Bob@ex.uz"}, "domain/ex.uz/all": {"*"}, "domain/ex.uz/ro": {}}}}}}
+	got := a.CalendarPresets("bob@ex.uz")
+	if len(got) != 1 || !got[0].Account.Collection || got[0].Account.URL != "http://127.0.0.1:5232/domain/ex.uz/" || got[0].CanWrite == nil {
+		t.Fatalf("%+v", got)
+	}
+	w := got[0].CanWrite
+	for u, ok := range map[string]bool{
+		"http://127.0.0.1:5232/domain/ex.uz/team/": true, "http://127.0.0.1:5232/domain/ex.uz/all/": true,
+		"http://127.0.0.1:5232/domain/ex.uz/ro/": false, "http://127.0.0.1:5232/domain/ex.uz/other/": false,
+	} {
+		if w(u) != ok {
+			t.Errorf("bob %s: %v", u, !ok)
+		}
+	}
+	if a.CalendarPresets("eve@ex.uz")[0].CanWrite("http://127.0.0.1:5232/domain/ex.uz/team/") {
+		t.Error("eve may not write team")
+	}
+	if a.CalendarPresets("x@other.uz") != nil {
+		t.Error("other domain")
+	}
+	plain := (&Adapter{cfg: Config{Presets: []dav.Preset{{ID: "m", URL: "http://h/%u/", Password: "session"}}}}).CalendarPresets("a@b")
+	if plain[0].CanWrite != nil || plain[0].Account.Collection {
+		t.Error("plain preset must not limit writes")
+	}
+}
+
 func TestInside(t *testing.T) {
 	for href, ok := range map[string]bool{
 		"/u/calendar/a.ics": true, "/u/calendar/": false, "/u/other/a.ics": false,

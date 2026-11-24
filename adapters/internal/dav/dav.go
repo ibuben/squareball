@@ -35,6 +35,13 @@ type Preset struct {
 	PasswordFile string   `yaml:"password_file"`
 	ReadOnly     bool     `yaml:"readonly"`
 	Domains      []string `yaml:"domains"`
+	// Только CalDAV. Collection — URL указывает на набор календарей: поиск
+	// через принципала не нужен, пустой набор — не ошибка.
+	Collection bool `yaml:"collection"`
+	// Writers — кому можно писать в календарь: путь коллекции без крайних
+	// "/" → ящики ("*" — всем, кто его видит). Календари не из списка — только
+	// чтение. Пусто — права определяет сервер.
+	Writers map[string][]string `yaml:"writers"`
 
 	Secret string `yaml:"-"` // прочитан из password_file
 }
@@ -83,7 +90,27 @@ func (p Preset) Account(mailbox string) (acc ext.ContactAccount, ok bool) {
 	if p.Password == "session" {
 		pw = ext.PasswordSession
 	}
-	return ext.ContactAccount{URL: ru.Replace(p.URL), Username: r.Replace(p.Username), Password: pw, Trusted: true}, true
+	return ext.ContactAccount{URL: ru.Replace(p.URL), Username: r.Replace(p.Username), Password: pw, Trusted: true, Collection: p.Collection}, true
+}
+
+// CanWrite — можно ли ящику писать в календарь по адресу calURL; nil — если
+// пресет не ограничивает запись.
+func (p Preset) CanWrite(mailbox string) func(calURL string) bool {
+	if p.Writers == nil {
+		return nil
+	}
+	return func(calURL string) bool {
+		u, err := url.Parse(calURL)
+		if err != nil {
+			return false
+		}
+		for _, m := range p.Writers[strings.Trim(u.Path, "/")] {
+			if m == "*" || strings.EqualFold(m, mailbox) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // --- HTTP -------------------------------------------------------------------------

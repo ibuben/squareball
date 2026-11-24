@@ -51,7 +51,14 @@ func (m *memCal) GetObject(_ context.Context, _ ext.ContactAccount, _, href stri
 	}
 	return o, nil
 }
-func (m *memCal) FindUID(context.Context, ext.ContactAccount, string, string) (ext.RemoteObject, error) {
+func (m *memCal) FindUID(_ context.Context, _ ext.ContactAccount, _, uid string) (ext.RemoteObject, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, o := range m.objs {
+		if e, err := calendar.FormEvent(o.ICS); err == nil && e.UID == uid {
+			return o, nil
+		}
+	}
 	return ext.RemoteObject{}, ext.ErrContactNotFound
 }
 func (m *memCal) PutObject(_ context.Context, _ ext.ContactAccount, _, href, etag string, ics []byte) (string, string, error) {

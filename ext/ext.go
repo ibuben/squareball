@@ -157,6 +157,9 @@ type ContactAccount struct {
 	// добавленных пользователем, источник обязан запрещать обращения
 	// во внутренние сети (SSRF), если администратор явно не разрешил.
 	Trusted bool
+	// Collection — URL указывает на набор календарей (только пресеты CalDAV):
+	// без поиска через принципала, пустой набор — не ошибка.
+	Collection bool
 }
 
 // ContactPreset — книга, которую администратор подключает всем ящикам.
@@ -225,6 +228,8 @@ type CalendarPreset struct {
 	Name     string
 	Account  ContactAccount
 	ReadOnly bool
+	// CanWrite — можно ли писать в календарь по его URL; nil — можно во все.
+	CanWrite func(calURL string) bool
 }
 
 // RemoteCalendar — календарь на сервере.

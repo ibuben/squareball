@@ -88,7 +88,7 @@ export interface Collected { email: string; name: string; uses: number; last_use
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
 // Календарь (CalDAV через сервер).
-export interface CalendarInfo { id: string; name: string; preset: string; readonly: boolean }
+export interface CalendarInfo { id: string; name: string; preset: string; preset_name?: string; readonly: boolean }
 export type CalError = '' | 'auth' | 'forbidden' | 'not_found' | 'unavailable'
 export interface Calendars { enabled: boolean; calendars: CalendarInfo[]; errors: Record<string, CalError> }
 // Вхождение события в диапазоне; у событий на весь день start/end — полночь, end не включается.
@@ -101,7 +101,11 @@ export interface CalEvent {
 export interface EventForm {
   uid?: string; summary: string; location?: string; description?: string
   start: string; end: string; all_day?: boolean; tz?: string; rrule?: string; recurring?: boolean
+  organizer?: Attendee   // ставит сервер
+  attendees?: Attendee[] // не передано — участники не меняются
 }
+// Итог рассылки участникам после сохранения или удаления встречи.
+export interface MeetingNotify { sent?: number; notify_error?: string }
 
 export interface Template { id: number; name: string; html: string }
 export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never'; threads: '' | 'on'
@@ -195,17 +199,19 @@ export const api = {
   inviteReply: (folder: string, uid: number, partstat: PartStat, comment = '') =>
     request<{ ok: boolean; partstat: PartStat; to: string }>('POST', 'api/v1/messages/invite-reply', { folder, uid, partstat, comment }),
   inviteSave: (folder: string, uid: number, partstat: PartStat | '' = '') =>
-    request<{ ok: boolean; saved: boolean }>('POST', 'api/v1/messages/invite-save', { folder, uid, partstat }),
+    request<{ ok: boolean; saved: boolean; updated?: boolean }>('POST', 'api/v1/messages/invite-save', { folder, uid, partstat }),
   calendars: (refresh = false) => request<Calendars>('GET', `api/v1/calendars?${q_({ refresh: refresh ? 1 : undefined })}`),
   calendarEvents: (from: string, to: string, tz: string) =>
     request<{ events: CalEvent[]; errors: Record<string, CalError>; truncated: boolean }>(
       'GET', `api/v1/calendar/events?${q_({ from, to, tz })}`),
   calendarEvent: (cal: string, href: string) =>
-    request<{ cal: string; href: string; etag: string; readonly: boolean; event: EventForm }>('GET', `api/v1/calendar/event?${q_({ cal, href })}`),
-  saveEvent: (cal: string, event: EventForm, href = '', etag = '') =>
-    request<{ ok: boolean; cal: string; href: string; etag: string }>('POST', 'api/v1/calendar/events', { cal, href, etag, event }),
-  deleteEvent: (cal: string, href: string, etag = '', uid = '', recurrence_id = '') =>
-    request<{ ok: boolean }>('POST', 'api/v1/calendar/events/delete', { cal, href, etag, uid, recurrence_id }),
+    request<{ cal: string; href: string; etag: string; readonly: boolean; foreign: boolean; event: EventForm }>(
+      'GET', `api/v1/calendar/event?${q_({ cal, href })}`),
+  saveEvent: (cal: string, event: EventForm, href = '', etag = '', notify = false) =>
+    request<{ ok: boolean; cal: string; href: string; etag: string } & MeetingNotify>(
+      'POST', 'api/v1/calendar/events', { cal, href, etag, event, notify }),
+  deleteEvent: (cal: string, href: string, etag = '', uid = '', recurrence_id = '', notify = false) =>
+    request<{ ok: boolean } & MeetingNotify>('POST', 'api/v1/calendar/events/delete', { cal, href, etag, uid, recurrence_id, notify }),
   zipURL: (folder: string, uid: number, name: string) => `api/v1/attachments.zip?${q_({ folder, uid, name })}`,
   move: (folder: string, uids: number[], dest: string) =>
     request('POST', 'api/v1/messages/move', { folder, uids, dest }),

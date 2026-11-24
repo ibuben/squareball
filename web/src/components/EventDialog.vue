@@ -1,9 +1,12 @@
 <script setup lang="ts">
 // Окно события: создание, правка и удаление. У повторяющегося события правка
-// меняет всю серию; удалить можно одно вхождение или всю серию.
+// меняет всю серию; удалить можно одно вхождение или всю серию. Участникам
+// своей встречи сервер рассылает приглашения, изменения и отмену (iTIP).
 import { computed, onMounted, ref } from 'vue'
-import { Repeat as RepeatIcon, Trash2, X } from 'lucide-vue-next'
-import { api, ApiError, type CalendarInfo, type EventForm } from '../api'
+import { Check, CircleHelp, Repeat as RepeatIcon, Trash2, UserRound, X } from 'lucide-vue-next'
+import { api, ApiError, type Address, type Attendee, type CalendarInfo, type EventForm, type MeetingNotify } from '../api'
+import { isEmail, who } from '../format'
+import AddressInput from './AddressInput.vue'
 import {
   addDays, browserTZ, dateValue, fromInputs, isoLocal, REPEATS, repeatOf, timeValue, type Occ, type Repeat,
 } from '../calendar'
@@ -40,6 +43,17 @@ const recurring = ref(false)
 const uid = ref('')
 const tz = ref(browserTZ())
 
+const attendees = ref<Address[]>([])
+const statuses = ref<Record<string, string>>({}) // адрес в нижнем регистре → PARTSTAT
+const loadedPeople = ref<Attendee[]>([])
+const organizer = ref<Attendee | null>(null)
+const foreign = ref(false) // встречу организует не ящик
+const notify = ref(true)
+const hadAttendees = computed(() => loadedPeople.value.length > 0)
+const showNotify = computed(() => !foreign.value && (attendees.value.length > 0 || hadAttendees.value))
+const psOf = (a: Address) => statuses.value[a.email.toLowerCase()]
+const answered = computed(() => attendees.value.filter((a) => psOf(a)))
+
 function fill(s: Date, e: Date) {
   startDate.value = dateValue(s); startTime.value = timeValue(s)
   endDate.value = dateValue(e); endTime.value = timeValue(e)
@@ -64,6 +78,11 @@ onMounted(async () => {
     recurring.value = !!ev.recurring
     repeat.value = repeatOf(ev.rrule)
     customRule.value = ev.rrule ?? ''
+    foreign.value = r.foreign
+    organizer.value = ev.organizer ?? null
+    loadedPeople.value = ev.attendees ?? []
+    attendees.value = loadedPeople.value.map((a) => ({ name: a.name, email: a.email }))
+    statuses.value = Object.fromEntries(loadedPeople.value.map((a) => [a.email.toLowerCase(), a.partstat ?? '']))
     if (ev.all_day) {
       // Даты — как записаны, без пересчёта поясов; конец в форме — включительно.
       const s = fromInputs(ev.start.slice(0, 10))
@@ -94,6 +113,10 @@ function form(): EventForm | null {
     return null
   }
   const rrule = repeat.value === 'custom' ? customRule.value : REPEATS[repeat.value]
+  if (attendees.value.some((a) => !isEmail(a.email))) {
+    err.value = t('ev.badAttendee')
+    return null
+  }
   return {
     uid: uid.value || undefined,
     summary: summary.value.trim(),
@@ -105,7 +128,16 @@ function form(): EventForm | null {
     end: allDay.value ? `${dateValue(e)}T00:00:00Z` : isoLocal(e),
     tz: tz.value,
     rrule,
+    // У чужой встречи участников не передаём: сервер их не меняет.
+    attendees: foreign.value ? undefined : attendees.value.map((a) => ({ name: a.name, email: a.email })),
   }
+}
+
+const NOTIFY_ERR: Record<string, Key> = { 'send.rate_limited': 'ev.notifyRate', 'send.too_many_recipients': 'ev.notifyTooMany' }
+function report(r: MeetingNotify, plain: Key, withSent: Key) {
+  if (r.notify_error) toast(t(NOTIFY_ERR[r.notify_error] ?? 'ev.notifyFailed'))
+  else if (r.sent) toast(t(withSent, { n: r.sent }))
+  else toast(t(plain))
 }
 
 const CODES: Record<string, Key> = {
@@ -125,8 +157,8 @@ async function save() {
   if (!f || busy.value) return
   busy.value = true
   try {
-    await api.saveEvent(cal.value, f, href.value, etag.value)
-    toast(t('ev.saved'))
+    const r = await api.saveEvent(cal.value, f, href.value, etag.value, showNotify.value && notify.value)
+    report(r, 'ev.saved', 'ev.sent')
     emit('saved')
   } catch (e) { fail(e) } finally { busy.value = false }
 }
@@ -136,8 +168,9 @@ async function remove(one: boolean) {
   busy.value = true
   err.value = ''
   try {
-    await api.deleteEvent(props.occ.cal, props.occ.href, one ? '' : etag.value, uid.value || props.occ.uid, one ? props.occ.recurrence_id : '')
-    toast(t('ev.deleted'))
+    const r = await api.deleteEvent(props.occ.cal, props.occ.href, one ? '' : etag.value, uid.value || props.occ.uid,
+      one ? props.occ.recurrence_id : '', !foreign.value && hadAttendees.value && notify.value)
+    report(r, 'ev.deleted', 'ev.deletedSent')
     emit('saved')
   } catch (e) { fail(e) } finally { busy.value = false }
 }
@@ -178,6 +211,42 @@ const repeatKeys: Repeat[] = ['none', 'daily', 'weekdays', 'weekly', 'monthly', 
         <label class="row">
           <span class="lbl">{{ t('ev.location') }}</span>
           <input v-model="location" class="input" maxlength="1000">
+        </label>
+        <div v-if="!foreign" class="people" data-test="event-attendees">
+          <AddressInput v-model="attendees" :label="t('ev.attendees')" />
+        </div>
+        <ul v-if="!foreign && answered.length" class="ps-list">
+          <li v-for="a in answered" :key="a.email" :title="a.email">
+            <Check v-if="psOf(a) === 'ACCEPTED'" :size="13" class="ps ok" />
+            <CircleHelp v-else-if="psOf(a) === 'TENTATIVE'" :size="13" class="ps maybe" />
+            <X v-else-if="psOf(a) === 'DECLINED'" :size="13" class="ps no" />
+            <span v-else class="ps dot" />
+            <span class="ellipsis">{{ who(a) }}</span>
+            <span class="faint">{{ t(`inv.ps.${psOf(a)}` as Key) }}</span>
+          </li>
+        </ul>
+        <template v-if="foreign">
+          <div v-if="organizer" class="row">
+            <span class="lbl"><UserRound :size="14" /> {{ t('ev.organizer') }}</span>
+            <span>{{ who(organizer) }} <span class="faint">&lt;{{ organizer.email }}&gt;</span></span>
+          </div>
+          <div v-if="loadedPeople.length" class="row top">
+            <span class="lbl">{{ t('ev.attendees') }}</span>
+            <ul class="ps-list flat">
+              <li v-for="a in loadedPeople" :key="a.email" :title="a.email">
+                <Check v-if="a.partstat === 'ACCEPTED'" :size="13" class="ps ok" />
+                <CircleHelp v-else-if="a.partstat === 'TENTATIVE'" :size="13" class="ps maybe" />
+                <X v-else-if="a.partstat === 'DECLINED'" :size="13" class="ps no" />
+                <span v-else class="ps dot" />
+                <span class="ellipsis">{{ who(a) }}</span>
+              </li>
+            </ul>
+          </div>
+          <p class="faint note">{{ t('ev.foreignNote', { who: organizer ? who(organizer) : '' }) }}</p>
+        </template>
+        <label v-if="showNotify" class="check" data-test="event-notify">
+          <input v-model="notify" type="checkbox">
+          {{ hadAttendees && !attendees.length ? t('ev.notifyCancel') : t('ev.notify') }}
         </label>
         <label class="row top">
           <span class="lbl">{{ t('ev.description') }}</span>
@@ -230,10 +299,26 @@ fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 10px; min-width
 footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .spacer { flex: 1; }
 .btn.danger { color: var(--danger); }
+.people :deep(.field) { padding: 2px 10px 2px 0; border: 0; }
+.people :deep(.label) { width: 80px; color: var(--text-2); }
+.people :deep(.chips) { border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; background: var(--pane); }
+.people :deep(.chips:focus-within) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.people :deep(.suggest) { left: 88px; }
+.ps-list { list-style: none; margin: -4px 0 0 88px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.ps-list.flat { margin: 0; }
+.ps-list li { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; }
+.ps { flex: none; }
+.ps.ok { color: var(--success); }
+.ps.maybe { color: #c98a00; }
+.ps.no { color: var(--danger); }
+.ps.dot { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--text-3); margin: 0 3px; }
 @media (max-width: 480px) {
   .when { grid-template-columns: minmax(0, 1fr) 100px; }
   .when .lbl { grid-column: 1 / -1; }
   .when.dateonly { grid-template-columns: minmax(0, 1fr); }
   .row { grid-template-columns: 1fr; }
+  .people :deep(.field) { flex-wrap: wrap; }
+  .people :deep(.suggest) { left: 0; }
+  .ps-list { margin-left: 0; }
 }
 </style>

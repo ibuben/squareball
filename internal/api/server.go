@@ -68,6 +68,8 @@ type Server struct {
 	imgSem    chan struct{}
 
 	metrics *metrics
+
+	sendMail func(cfg *config.SMTP, cr mail.Creds, from string, rcpts []string, raw []byte, dsn bool) error // mail.Send; в тестах — подмена
 }
 
 type Options struct {
@@ -94,6 +96,7 @@ func New(o Options) (*Server, error) {
 		imgClient:     netguard.Client(15*time.Second, false),
 		imgSem:        make(chan struct{}, proxyParallel),
 		metrics:       newMetrics(),
+		sendMail:      mail.Send,
 	}
 	if s.store == nil {
 		return nil, errors.New("api: store is required")

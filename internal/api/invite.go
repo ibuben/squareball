@@ -23,20 +23,10 @@ var rsvpFlags = map[string]string{
 // inviteSelf — от чьего имени отвечать: адрес ящика или отправителя, который
 // есть среди участников; иначе — отправитель по умолчанию (или сам ящик).
 func (s *Server) inviteSelf(r *http.Request, sess *session.Session, inv *mail.Invite) (mail.Address, bool) {
-	cands := []mail.Address{{Email: sess.Mailbox}}
-	if ids, err := s.store.Identities(r.Context(), sess.Mailbox); err == nil {
-		for _, id := range ids {
-			a := mail.Address{Name: id.Name, Email: id.Email}
-			if id.IsDefault {
-				cands = append([]mail.Address{a}, cands...)
-			} else {
-				cands = append(cands, a)
-			}
-		}
-	}
+	cands := s.ownAddresses(r, sess)
 	for _, c := range cands {
 		for _, a := range inv.Attendees {
-			if strings.EqualFold(a.Email, c.Email) && s.checkSender(sess.Mailbox, c.Email) {
+			if strings.EqualFold(a.Email, c.Email) {
 				if c.Name == "" {
 					c.Name = a.Name
 				}
@@ -44,12 +34,7 @@ func (s *Server) inviteSelf(r *http.Request, sess *session.Session, inv *mail.In
 			}
 		}
 	}
-	for _, c := range cands {
-		if s.checkSender(sess.Mailbox, c.Email) {
-			return c, false
-		}
-	}
-	return mail.Address{Email: sess.Mailbox}, false
+	return cands[0], false
 }
 
 // inviteView — что знает интерфейс о приглашении сверх самого события.
@@ -59,7 +44,10 @@ func (s *Server) inviteView(r *http.Request, m *mail.Message) map[string]any {
 	}
 	sess := sessionFrom(r.Context())
 	self, attendee := s.inviteSelf(r, sess, m.Invite)
-	organizer := m.Invite.Organizer != nil && strings.EqualFold(m.Invite.Organizer.Email, self.Email)
+	organizer := false
+	if m.Invite.Organizer != nil {
+		_, organizer = s.ownAddress(r, sess, m.Invite.Organizer.Email)
+	}
 	replied := ""
 	for ps, f := range rsvpFlags {
 		for _, fl := range m.Flags {

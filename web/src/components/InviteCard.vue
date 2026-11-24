@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Карточка события из письма-приглашения (text/calendar): когда, где, кто,
 // и ответ организатору — «Принять», «Под вопросом», «Отклонить».
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { CalendarMinus, CalendarPlus, Check, CircleHelp, Clock, Download, MapPin, MessageSquare, Repeat, UserRound, Users, X } from 'lucide-vue-next'
 import { api, ApiError, type Attendee, type Invite, type InviteView, type Message, type PartStat } from '../api'
 import { who } from '../format'
@@ -109,6 +109,22 @@ async function toCalendar(ps: PartStat | '' = props.view?.replied ?? '', quiet =
   } finally { saving.value = false }
 }
 
+// Ответ участника на свою встречу записываем в календарь сразу при открытии
+// письма: так же делают Gmail и Outlook. Повторное открытие ничего не меняет.
+const replyNote = ref('')
+watch(() => `${props.msg.folder}\u0000${props.msg.uid}`, async (key) => {
+  replyNote.value = ''
+  if (props.inv.method !== 'REPLY' || !props.view?.is_organizer || !hasCalendar.value) return
+  try {
+    await api.inviteSave(props.msg.folder, props.msg.uid)
+    if (key === `${props.msg.folder}\u0000${props.msg.uid}`) replyNote.value = t('inv.replyRecorded')
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'calendar.event_not_found' && key === `${props.msg.folder}\u0000${props.msg.uid}`) {
+      replyNote.value = t('inv.replyNotInCalendar')
+    }
+  }
+}, { immediate: true })
+
 const safeURL = computed(() => (/^https?:\/\//i.test(props.inv.url ?? '') ? props.inv.url : ''))
 </script>
 
@@ -182,6 +198,7 @@ const safeURL = computed(() => (/^https?:\/\//i.test(props.inv.url ?? '') ? prop
       </div>
     </div>
     <div v-else-if="view?.is_organizer && inv.method === 'REQUEST'" class="faint note">{{ t('inv.youOrganize') }}</div>
+    <div v-if="replyNote" class="faint note" data-test="invite-reply-note">{{ replyNote }}</div>
 
     <div v-if="canSave" class="calendar">
       <button class="btn" :disabled="saving" data-test="invite-calendar" @click="toCalendar()">
