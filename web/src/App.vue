@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { defineAsyncComponent, onMounted } from 'vue'
 import { setUnauthorizedHandler } from './api'
 import { t } from './i18n'
 import LoginView from './components/LoginView.vue'
 import MailView from './components/MailView.vue'
-import ComposeWindow from './components/ComposeWindow.vue'
+// Окно письма с редактором (TipTap/ProseMirror) грузится отдельным чанком при первом открытии.
+const ComposeWindow = defineAsyncComponent(() => import('./components/ComposeWindow.vue'))
 import { applyTheme, boot, setMe, state, toast, unsaved } from './store'
 
 setUnauthorizedHandler(() => {

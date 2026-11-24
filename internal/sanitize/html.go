@@ -8,6 +8,7 @@ package sanitize
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -20,6 +21,9 @@ var policy = func() *bluemonday.Policy {
 	p.AllowAttrs("align", "valign", "bgcolor", "width", "height", "border",
 		"cellpadding", "cellspacing", "colspan", "rowspan", "dir").Globally()
 	p.AllowAttrs("color", "face", "size").OnElements("font")
+	// Маркер цитаты исходного письма в черновиках и отправленных (см. ComposeWindow).
+	p.AllowAttrs("data-wm-quote").Matching(regexp.MustCompile(`^1$`)).OnElements("div")
+	p.AllowAttrs("type").Matching(regexp.MustCompile(`^cite$`)).OnElements("blockquote")
 	p.AllowStyles(
 		"color", "background-color", "font-family", "font-size", "font-weight", "font-style",
 		"text-align", "text-decoration", "text-transform", "line-height", "letter-spacing",

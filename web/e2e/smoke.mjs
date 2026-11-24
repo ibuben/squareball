@@ -78,10 +78,15 @@ try {
 
   await page.keyboard.press('r')
   await page.getByRole('dialog').waitFor()
-  // Курсор уже стоит в начале редактора, над цитатой.
+  // Курсор сразу в редакторе; цитата исходного письма — отдельно, под ним.
+  await page.locator('.ProseMirror:focus').waitFor()
   await page.keyboard.type('Проверка ответа из e2e. ')
-  const quoteText = await page.getByRole('dialog').locator('.editor blockquote').innerText()
-  if (quoteText.includes('Проверка ответа')) throw new Error('ответ напечатан внутри цитаты')
+  await page.keyboard.press('Control+b')
+  await page.keyboard.type('Жирный текст.')
+  if (await page.getByRole('dialog').locator('.ProseMirror blockquote').count()) throw new Error('цитата попала в редактор')
+  if (!(await page.getByRole('dialog').locator('.ProseMirror strong', { hasText: 'Жирный текст' }).count())) throw new Error('Ctrl+B не сработал')
+  await page.getByRole('dialog').getByRole('button', { name: 'Показать цитату' }).click()
+  await page.frameLocator('iframe.quote-frame').getByText('Привет!').first().waitFor()
   await shot('04-reply')
   await page.getByRole('dialog').getByRole('button', { name: 'Отправить' }).click()
   await page.getByText('Письмо отправлено').waitFor()
@@ -91,7 +96,7 @@ try {
   const compose = page.getByRole('dialog').last()
   await compose.locator('.chips input').first().fill(USER2)
   await compose.locator('.field input').last().fill('Письмо из e2e-теста')
-  await compose.locator('.editor').click()
+  await compose.locator('.ProseMirror').click()
   await page.keyboard.type('Привет! Это проверка отправки.')
   await compose.locator('input[type=file]').setInputFiles({ name: 'отчёт.txt', mimeType: 'text/plain', buffer: Buffer.from('данные') })
   await compose.getByRole('button', { name: 'Отправить' }).click()
@@ -101,13 +106,19 @@ try {
   await page.locator('.folder', { hasText: 'Отправленные' }).click()
   await page.locator('.item', { hasText: 'Письмо из e2e-теста' }).first().waitFor()
   step('копия в «Отправленных»')
+  await page.locator('.item', { hasText: 'Re: Письмо для e2e' }).first().click()
+  const sentBody = await page.frameLocator('iframe.body').locator('body').innerText()
+  if (!sentBody.includes('Проверка ответа') || !sentBody.includes('Привет! Это письмо')) {
+    throw new Error('в отправленном ответе нет текста или цитаты: ' + sentBody.slice(0, 200))
+  }
+  step('ответ ушёл с текстом и цитатой исходного письма')
 
   // Черновик: автосохранение, закрытие окна, продолжение из папки, отправка.
   const draftSubject = `Черновик e2e ${Date.now()}`
   await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
   const dlg = page.getByRole('dialog').last()
   await dlg.locator('.field input').last().fill(draftSubject)
-  await dlg.locator('.editor').click()
+  await dlg.locator('.ProseMirror').click()
   await page.keyboard.type('Текст черновика')
   await dlg.locator('[data-draft-status]', { hasText: 'Сохранено в' }).waitFor({ timeout: 15000 })
   step('черновик сохранился автоматически')

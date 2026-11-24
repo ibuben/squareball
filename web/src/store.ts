@@ -5,7 +5,9 @@ import {
 import { t } from './i18n'
 
 export interface ComposeInit {
-  to?: Address[]; cc?: Address[]; bcc?: Address[]; subject?: string; html?: string
+  to?: Address[]; cc?: Address[]; bcc?: Address[]; subject?: string
+  html?: string   // текст пользователя — в редактор
+  quote?: string  // цитата исходного письма — отдельно, без изменений
   inReplyTo?: string; references?: string[]
   source?: { folder: string; uid: number; mode: 'reply' | 'forward' }
   // Продолжение черновика: ссылка на него и его вложения.
@@ -192,13 +194,24 @@ export async function openDraft(uid: number) {
   try {
     const v = await api.message(state.folder, uid, true, true)
     const m = v.message
+    const { text, quote } = splitQuote(v.body_html)
     openCompose({
-      to: m.to, cc: m.cc ?? [], bcc: m.bcc ?? [], subject: m.subject, html: v.body_html,
+      to: m.to, cc: m.cc ?? [], bcc: m.bcc ?? [], subject: m.subject, html: text, quote,
       inReplyTo: m.in_reply_to, references: m.references,
       draftRef: { folder: m.folder, uid: m.uid },
       existing: m.attachments.filter((a) => !a.inline || !a.content_id),
     })
   } catch (e) { reportError(e) }
+}
+
+// Делит тело черновика на текст пользователя и цитату (<div data-wm-quote>).
+export function splitQuote(html: string): { text: string; quote: string } {
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  const q = doc.body.querySelector('div[data-wm-quote]')
+  if (!q) return { text: html, quote: '' }
+  const quote = q.innerHTML
+  q.remove()
+  return { text: doc.body.innerHTML, quote }
 }
 
 // Компоненты окон сообщают, есть ли у них несохранённые изменения.

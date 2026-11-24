@@ -9,6 +9,10 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@tiptap/extensions": "3.33.0",
+    "@tiptap/pm": "3.33.0",
+    "@tiptap/starter-kit": "3.33.0",
+    "@tiptap/vue-3": "3.33.0",
     "lucide-vue-next": "^0.511.0",
     "vue": "^3.5.13"
   },

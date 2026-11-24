@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import {
-  Bold, Italic, Link, List, ListOrdered, Maximize2, Minimize2, Minus, Paperclip, Send, Trash2, Underline, X,
-} from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ChevronDown, ChevronUp, Maximize2, Minimize2, Minus, Paperclip, Send, Trash2, X } from 'lucide-vue-next'
 import { api, ApiError, type Address, type Attachment, type MsgRef } from '../api'
 import { size } from '../format'
 import { t } from '../i18n'
 import AddressInput from './AddressInput.vue'
+import RichEditor from './RichEditor.vue'
 import { closeCompose, loadFolders, loadList, state, toast, unsaved, type ComposeInit } from '../store'
 
 const props = defineProps<{ id: number; init: ComposeInit; index: number }>()
@@ -19,7 +18,20 @@ const subject = ref(props.init.subject ?? '')
 const files = ref<File[]>([])                              // ещё не сохранённые на сервере
 const existing = ref<Attachment[]>(props.init.existing ?? []) // уже лежат в черновике
 const draftRef = ref<MsgRef | undefined>(props.init.draftRef)
-const editor = ref<HTMLDivElement>()
+const editor = ref<InstanceType<typeof RichEditor>>()
+// Цитата исходного письма живёт отдельно от редактора и вставляется при сохранении
+// без изменений, внутри <div data-wm-quote> — так не теряется вёрстка оригинала.
+const quote = ref(props.init.quote ?? '')
+const quoteOpen = ref(false)
+const quoteFrame = ref<HTMLIFrameElement>()
+const quoteDoc = computed(() => `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
+<style>html,body{margin:0;background:#fff;color:#1d2330}body{font:13px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;padding:8px 12px}
+img{max-width:100%;height:auto}blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #c9d2e3;color:#4b5565}</style>
+</head><body>${quote.value}</body></html>`)
+function fitQuote() {
+  const f = quoteFrame.value
+  if (f?.contentDocument?.documentElement) f.style.height = `${Math.min(f.contentDocument.documentElement.scrollHeight, 400)}px`
+}
 const sending = ref(false)
 const minimized = ref(false)
 const maximized = ref(false)
@@ -51,36 +63,23 @@ function touch() {
 }
 
 onMounted(() => {
-  if (!editor.value) return
-  editor.value.innerHTML = props.init.html ?? '<p><br></p>'
-  if (to.value.length) {
-    editor.value.focus()
-    const r = document.createRange()
-    r.setStart(editor.value, 0)
-    r.collapse(true)
-    getSelection()?.removeAllRanges()
-    getSelection()?.addRange(r)
-  }
+  // Есть получатель (ответ) — курсор сразу в текст; иначе фокус останется на «Кому».
+  if (to.value.length) void nextTick(() => editor.value?.focusStart())
 })
 onBeforeUnmount(() => { clearTimeout(saveTimer); unsaved.delete(props.id) })
 
-function exec(cmd: string, arg?: string) {
-  editor.value?.focus()
-  // execCommand устарел, но остаётся самым простым способом для базового форматирования;
-  // полноценный редактор (TipTap) — следующий шаг.
-  document.execCommand(cmd, false, arg)
+function addFiles(list: FileList | File[] | null | undefined) {
+  const arr = Array.from(list ?? [])
+  if (!arr.length) return
+  files.value = [...files.value, ...arr]
   touch()
-}
-function link() {
-  const url = prompt('URL', 'https://')
-  if (url && /^(https?:|mailto:)/i.test(url)) exec('createLink', url)
 }
 
-function addFiles(list: FileList | null | undefined) {
-  if (!list?.length) return
-  files.value = [...files.value, ...Array.from(list)]
-  touch()
+function bodyHTML(): string {
+  const text = editor.value?.getHTML() ?? ''
+  return quote.value ? `${text}<div data-wm-quote="1">${quote.value}</div>` : text
 }
+function removeQuote() { quote.value = ''; touch() }
 function removeFile(i: number) { files.value.splice(i, 1); touch() }
 function removeExisting(i: number) { existing.value.splice(i, 1); touch() }
 
@@ -88,7 +87,7 @@ function buildForm(): FormData {
   const form = new FormData()
   form.append('draft', JSON.stringify({
     to: to.value, cc: cc.value, bcc: bcc.value, subject: subject.value,
-    html: editor.value?.innerHTML ?? '', in_reply_to: props.init.inReplyTo ?? '',
+    html: bodyHTML(), in_reply_to: props.init.inReplyTo ?? '',
     references: props.init.references ?? [], source: props.init.source ?? null,
     draft_ref: draftRef.value ?? null, keep_attachments: existing.value.map((a) => a.index),
   }))
@@ -155,7 +154,7 @@ async function send() {
 // Закрытие сохраняет черновик (как в десктопных клиентах), а не спрашивает об удалении.
 async function close() {
   const hasContent = to.value.length || subject.value || files.value.length || existing.value.length ||
-    (editor.value?.innerText.trim() ?? '') !== ''
+    !(editor.value?.isEmpty() ?? true)
   if (dirty.value && hasContent) {
     await save()
     if (saveError.value) return // окно остаётся, чтобы не потерять текст
@@ -202,18 +201,21 @@ async function discard() {
         <span class="label">{{ t('compose.subject') }}</span>
         <input v-model="subject" @input="touch" />
       </div>
-      <div class="tools">
-        <button class="icon-btn" title="Bold" @click="exec('bold')"><Bold :size="15" /></button>
-        <button class="icon-btn" title="Italic" @click="exec('italic')"><Italic :size="15" /></button>
-        <button class="icon-btn" title="Underline" @click="exec('underline')"><Underline :size="15" /></button>
-        <button class="icon-btn" title="List" @click="exec('insertUnorderedList')"><List :size="15" /></button>
-        <button class="icon-btn" title="Numbered" @click="exec('insertOrderedList')"><ListOrdered :size="15" /></button>
-        <button class="icon-btn" title="Link" @click="link"><Link :size="15" /></button>
+      <div class="body" :class="{ drag: dragging }"
+           @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop="dragging = false">
+        <RichEditor ref="editor" :content="init.html ?? ''" :placeholder="t('compose.placeholder')" @change="touch" @files="addFiles" @submit="send" />
+        <div v-if="quote" class="quote">
+          <div class="quote-bar">
+            <button type="button" class="link-btn" @click="quoteOpen = !quoteOpen">
+              <component :is="quoteOpen ? ChevronUp : ChevronDown" :size="14" />
+              {{ quoteOpen ? t('compose.hideQuote') : t('compose.showQuote') }}
+            </button>
+            <button type="button" class="link-btn" @click="removeQuote">{{ t('compose.removeQuote') }}</button>
+          </div>
+          <iframe v-if="quoteOpen" ref="quoteFrame" class="quote-frame" title="quote" :srcdoc="quoteDoc"
+                  sandbox="allow-same-origin allow-popups" @load="fitQuote" />
+        </div>
       </div>
-      <div ref="editor" class="editor scroll" contenteditable="true" :class="{ drag: dragging }"
-           @input="touch"
-           @dragover.prevent="dragging = true" @dragleave="dragging = false"
-           @drop.prevent="dragging = false; addFiles($event.dataTransfer?.files)" />
       <div v-if="files.length || existing.length" class="files">
         <span v-for="(a, i) in existing" :key="'e' + a.index" class="file">
           <Paperclip :size="13" /> <span class="ellipsis">{{ a.filename }}</span> <span class="faint">{{ size(a.size) }}</span>
@@ -251,10 +253,13 @@ header .ellipsis { flex: 1; }
 .field { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .field .label { color: var(--text-3); width: 56px; flex: none; }
 .field input { flex: 1; border: 0; outline: none; background: transparent; height: 32px; }
-.tools { display: flex; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
-.editor { flex: 1; padding: 12px 14px; outline: none; font-size: 14px; line-height: 1.55; }
-.editor.drag { background: var(--accent-soft); }
-.editor :deep(blockquote) { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--text-2); }
+.body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.body.drag { background: var(--accent-soft); }
+.quote { padding: 0 14px 10px; }
+.quote-bar { display: flex; gap: 14px; }
+.link-btn { display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--text-2); font-size: 12px; }
+.link-btn:hover { color: var(--accent); }
+.quote-frame { display: block; width: 100%; height: 120px; margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 .files { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); }
 .file { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 2px 2px 2px 8px; border-radius: 6px; background: var(--pane-alt); border: 1px solid var(--border); }
 .file .x { width: 22px; height: 22px; }

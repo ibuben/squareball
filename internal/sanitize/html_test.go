@@ -81,3 +81,13 @@ func TestTextEscapedAndLinkified(t *testing.T) {
 		t.Errorf("quote: %s", out)
 	}
 }
+
+func TestQuoteMarkerKept(t *testing.T) {
+	out := Email(`<p>ok</p><div data-wm-quote="1"><blockquote type="cite">q</blockquote></div><div data-wm-quote="x" data-evil="1">z</div>`, noCID, false).HTML
+	if !strings.Contains(out, `<div data-wm-quote="1">`) || !strings.Contains(out, `type="cite"`) {
+		t.Errorf("marker dropped: %s", out)
+	}
+	if strings.Contains(out, `data-wm-quote="x"`) || strings.Contains(out, "data-evil") {
+		t.Errorf("unexpected attrs kept: %s", out)
+	}
+}

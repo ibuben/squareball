@@ -54,7 +54,7 @@ const notMe = (list: Address[] = []) => list.filter((a) => a.email.toLowerCase()
 function quoteHTML(): string {
   const m = msg.value!
   const head = `${escapeHTML(fullDate(m.date))}, ${escapeHTML(fullAddr(m.from[0] ?? { email: '' }))} ${t('compose.wrote')}:`
-  return `<p><br></p><p>${head}</p><blockquote>${state.current!.body_html}</blockquote>`
+  return `<p>${head}</p><blockquote type="cite">${state.current!.body_html}</blockquote>`
 }
 
 function reply(all: boolean) {
@@ -66,7 +66,7 @@ function reply(all: boolean) {
     to: to.length ? to : primary,
     cc: all ? notMe(m.cc) : [],
     subject: replySubject(m.subject, 'Re'),
-    html: quoteHTML(),
+    quote: quoteHTML(),
     inReplyTo: m.message_id,
     references: m.references,
     source: { folder: m.folder, uid: m.uid, mode: 'reply' },
@@ -85,7 +85,7 @@ function forward() {
   ].join('<br>')
   openCompose({
     subject: replySubject(m.subject, 'Fwd'),
-    html: `<p><br></p><p>${head}</p>${state.current!.body_html}`,
+    quote: `<p>${head}</p>${state.current!.body_html}`,
     source: { folder: m.folder, uid: m.uid, mode: 'forward' },
   })
 }
