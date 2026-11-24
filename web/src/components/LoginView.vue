@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Globe, Mail } from 'lucide-vue-next'
 import { api, ApiError } from '../api'
-import { availableLangs, lang, LANGS, setLang, t, type Lang } from '../i18n'
+import { availableLangs, lang, langName, setLang, t } from '../i18n'
 import { applyBrand, brandLogo, restoreBrand } from '../brand'
 import { setMe, state } from '../store'
 import ThemeToggle from './ThemeToggle.vue'
@@ -15,7 +15,7 @@ const busy = ref(false)
 const saved = restoreBrand()
 const brand = computed(() => state.config?.brand ?? saved ?? { name: '' })
 const domain = computed(() => state.config?.default_domain ?? '')
-const langs = computed(() => availableLangs(state.config?.languages))
+const langs = computed(() => availableLangs())
 if (state.config) {
   applyBrand(state.config.brand)
   document.title = state.config.brand.name
@@ -44,8 +44,8 @@ async function submit() {
       <label v-if="langs.length > 1" class="lang" :title="t('login.language')">
         <Globe :size="16" aria-hidden="true" />
         <select :value="lang()" :aria-label="t('login.language')" data-test="login-lang"
-                @change="setLang(($event.target as HTMLSelectElement).value as Lang)">
-          <option v-for="l in langs" :key="l" :value="l">{{ LANGS[l] }}</option>
+                @change="setLang(($event.target as HTMLSelectElement).value)">
+          <option v-for="l in langs" :key="l" :value="l">{{ langName(l) }}</option>
         </select>
       </label>
       <ThemeToggle :size="18" />

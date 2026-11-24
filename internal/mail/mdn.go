@@ -13,6 +13,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-message"
 	gomail "github.com/emersion/go-message/mail"
+	"github.com/ibuben/squareball/internal/locale"
 )
 
 // FlagMDNSent — уведомление о прочтении уже отправлено или отклонено (RFC 3503).
@@ -65,30 +66,18 @@ type MDN struct {
 	Date      time.Time // дата исходного письма
 	Automatic bool
 	Hostname  string
-	Lang      string // язык текста: "ru" или английский по умолчанию
-}
-
-type mdnText struct{ subject, sentOn, body, dateFmt, nowFmt string }
-
-var mdnTexts = map[string]mdnText{
-	"en": {"Read: ", " sent on ", "Your message%s\r\n\r\n  To: %s\r\n  Subject: %s\r\n\r\nwas displayed to the recipient on %s.\r\n" +
-		"This does not guarantee that the message has been read or understood.\r\n", "2 Jan 2006 15:04", "2 Jan 2006 15:04 -0700"},
-	"ru": {"Прочитано: ", " от ", "Ваше письмо%s\r\n\r\n  Кому: %s\r\n  Тема: %s\r\n\r\nбыло показано получателю %s.\r\n" +
-		"Это не гарантирует, что письмо прочитано и понято.\r\n", "02.01.2006 15:04", "02.01.2006 15:04 -0700"},
+	Lang      string // язык текста: код языка (internal/locale)
 }
 
 // BuildMDN собирает multipart/report; report-type=disposition-notification.
 func BuildMDN(n MDN) ([]byte, error) {
-	tx, ok := mdnTexts[n.Lang]
-	if !ok {
-		tx = mdnTexts["en"]
-	}
+	tx := func(k string) string { return locale.S(n.Lang, "mdn."+k) }
 	var h message.Header
 	mh := gomail.Header{Header: h}
 	mh.SetDate(time.Now())
 	mh.SetAddressList("From", toMail([]Address{n.From}))
 	mh.SetAddressList("To", []*gomail.Address{{Address: n.To}})
-	mh.SetSubject(tx.subject + n.Subject)
+	mh.SetSubject(tx("subject") + n.Subject)
 	host := n.Hostname
 	if host == "" {
 		_, host, _ = strings.Cut(n.From.Email, "@")
@@ -119,9 +108,9 @@ func BuildMDN(n MDN) ([]byte, error) {
 	}
 	when := ""
 	if !n.Date.IsZero() {
-		when = tx.sentOn + n.Date.Format(tx.dateFmt)
+		when = tx("sent_on") + n.Date.Format(tx("date_format"))
 	}
-	fmt.Fprintf(pw, tx.body, when, n.From.Email, n.Subject, time.Now().Format(tx.nowFmt))
+	fmt.Fprintf(pw, tx("body"), when, n.From.Email, n.Subject, time.Now().Format(tx("now_format")))
 	pw.Close()
 
 	var rh message.Header

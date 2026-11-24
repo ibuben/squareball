@@ -9,6 +9,7 @@ import (
 
 	"github.com/emersion/go-message"
 	gomail "github.com/emersion/go-message/mail"
+	"github.com/ibuben/squareball/internal/locale"
 )
 
 // InviteMail — письмо организатора участникам: METHOD:REQUEST (приглашение
@@ -20,21 +21,7 @@ type InviteMail struct {
 	From     Address
 	To       []Address
 	Hostname string
-	Lang     string // "ru" или английский по умолчанию
-}
-
-var inviteSubject = map[string]map[string]string{
-	"en": {"new": "Invitation", "update": "Updated invitation", "cancel": "Cancelled"},
-	"ru": {"new": "Приглашение", "update": "Изменено приглашение", "cancel": "Отменено"},
-}
-
-var inviteLabels = map[string]map[string]string{
-	"en": {"when": "When", "where": "Where", "organizer": "Organizer", "attendees": "Attendees",
-		"cancel": "This meeting has been cancelled.", "cancelOne": "This occurrence of the meeting has been cancelled.",
-		"untitled": "(untitled)"},
-	"ru": {"when": "Когда", "where": "Где", "organizer": "Организатор", "attendees": "Участники",
-		"cancel": "Встреча отменена.", "cancelOne": "Это повторение встречи отменено.",
-		"untitled": "(без названия)"},
+	Lang     string // код языка (internal/locale)
 }
 
 func personLine(a Attendee) string {
@@ -75,9 +62,6 @@ func BuildInviteMail(m InviteMail) ([]byte, error) {
 		return nil, errors.New("invite: no recipients")
 	}
 	lang := m.Lang
-	if inviteSubject[lang] == nil {
-		lang = "en"
-	}
 	inv, err := ParseInvite(m.ICS)
 	if err != nil {
 		return nil, err
@@ -86,10 +70,10 @@ func BuildInviteMail(m InviteMail) ([]byte, error) {
 	if method != "request" && method != "cancel" {
 		return nil, fmt.Errorf("invite: method %q", inv.Method)
 	}
-	L := inviteLabels[lang]
+	L := func(k string) string { return locale.S(lang, "invite."+k) }
 	summary := inv.Summary
 	if summary == "" {
-		summary = L["untitled"]
+		summary = L("untitled")
 	}
 	kind := "new"
 	switch {
@@ -103,24 +87,24 @@ func BuildInviteMail(m InviteMail) ([]byte, error) {
 	body.WriteString(summary + "\r\n\r\n")
 	if kind == "cancel" {
 		if inv.RecurrenceID != "" {
-			body.WriteString(L["cancelOne"] + "\r\n\r\n")
+			body.WriteString(L("cancel_one") + "\r\n\r\n")
 		} else {
-			body.WriteString(L["cancel"] + "\r\n\r\n")
+			body.WriteString(L("cancel") + "\r\n\r\n")
 		}
 	}
-	fmt.Fprintf(&body, "%s: %s\r\n", L["when"], inviteWhen(inv))
+	fmt.Fprintf(&body, "%s: %s\r\n", L("when"), inviteWhen(inv))
 	if inv.Location != "" {
-		fmt.Fprintf(&body, "%s: %s\r\n", L["where"], inv.Location)
+		fmt.Fprintf(&body, "%s: %s\r\n", L("where"), inv.Location)
 	}
 	if inv.Organizer != nil {
-		fmt.Fprintf(&body, "%s: %s\r\n", L["organizer"], personLine(*inv.Organizer))
+		fmt.Fprintf(&body, "%s: %s\r\n", L("organizer"), personLine(*inv.Organizer))
 	}
 	if len(inv.Attendees) > 0 && kind != "cancel" {
 		names := make([]string, 0, len(inv.Attendees))
 		for _, a := range inv.Attendees {
 			names = append(names, personLine(a))
 		}
-		fmt.Fprintf(&body, "%s: %s\r\n", L["attendees"], strings.Join(names, ", "))
+		fmt.Fprintf(&body, "%s: %s\r\n", L("attendees"), strings.Join(names, ", "))
 	}
 	if d := strings.TrimSpace(inv.Description); d != "" && kind != "cancel" {
 		body.WriteString("\r\n" + strings.ReplaceAll(strings.ReplaceAll(d, "\r\n", "\n"), "\n", "\r\n") + "\r\n")
@@ -131,7 +115,7 @@ func BuildInviteMail(m InviteMail) ([]byte, error) {
 	mh.SetDate(time.Now())
 	mh.SetAddressList("From", toMail([]Address{m.From}))
 	mh.SetAddressList("To", toMail(m.To))
-	mh.SetSubject(inviteSubject[lang][kind] + ": " + summary)
+	mh.SetSubject(L("subject."+kind) + ": " + summary)
 	host := m.Hostname
 	if host == "" {
 		_, host, _ = strings.Cut(m.From.Email, "@")

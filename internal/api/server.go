@@ -19,6 +19,7 @@ import (
 
 	"github.com/ibuben/squareball/ext"
 	"github.com/ibuben/squareball/internal/config"
+	"github.com/ibuben/squareball/internal/locale"
 	"github.com/ibuben/squareball/internal/mail"
 	"github.com/ibuben/squareball/internal/netguard"
 	"github.com/ibuben/squareball/internal/session"
@@ -497,15 +498,12 @@ func (l *limiter) Reset(key string) {
 	l.mu.Unlock()
 }
 
-// serverLangs — языки, на которых сервер умеет писать письма и служебные тексты.
-var serverLangs = map[string]bool{"en": true, "ru": true}
-
 // Lang — язык пользователя для текстов, которые формирует сервер (уведомления о прочтении,
 // ответы на приглашения, имена правил Sieve). Порядок: cookie wm_lang, которую ставит
 // клиент по выбранному языку интерфейса → Accept-Language → ui.default_language.
 func (s *Server) Lang(r *http.Request) string {
 	ok := func(l string) bool {
-		if !serverLangs[l] {
+		if !locale.Known(l) {
 			return false
 		}
 		for _, a := range s.cfg.UI.Languages {
@@ -525,7 +523,7 @@ func (s *Server) Lang(r *http.Request) string {
 			return base
 		}
 	}
-	if serverLangs[s.cfg.UI.DefaultLanguage] {
+	if locale.Known(s.cfg.UI.DefaultLanguage) {
 		return s.cfg.UI.DefaultLanguage
 	}
 	return "en"

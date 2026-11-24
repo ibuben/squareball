@@ -23,6 +23,7 @@ import (
 	"github.com/ibuben/squareball/ext"
 	"github.com/ibuben/squareball/internal/api"
 	"github.com/ibuben/squareball/internal/config"
+	"github.com/ibuben/squareball/internal/locale"
 	"github.com/ibuben/squareball/internal/mail"
 	"github.com/ibuben/squareball/internal/password"
 	"github.com/ibuben/squareball/internal/store"
@@ -165,6 +166,29 @@ func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(w, opts))
 }
 
+// loadLocales подключает языковые пакеты из ui.locales_dir. Битый пакет — предупреждение,
+// а не отказ запуска: пакет ставится отдельно от webmail. Язык по умолчанию, которого
+// нет (пакет удалили), заменяется английским.
+func loadLocales(cfg *config.Config, log *slog.Logger) error {
+	codes, err := locale.Load(cfg.UI.LocalesDir)
+	if err != nil {
+		log.Warn("language packs", "dir", cfg.UI.LocalesDir, "err", err)
+	}
+	if len(codes) > 0 {
+		log.Info("language packs", "dir", cfg.UI.LocalesDir, "languages", codes)
+	}
+	for _, l := range cfg.UI.Languages {
+		if !locale.Known(l) {
+			log.Warn("ui.languages: no such language, skipped", "language", l)
+		}
+	}
+	if !locale.Known(cfg.UI.DefaultLanguage) {
+		log.Warn("ui.default_language: no such language, using en", "language", cfg.UI.DefaultLanguage)
+		cfg.UI.DefaultLanguage = "en"
+	}
+	return nil
+}
+
 type configNode struct{ n yaml.Node }
 
 func (c configNode) Decode(v any) error {
@@ -184,6 +208,9 @@ func Run(ctx context.Context, cfgPath string, adapters ...ext.Adapter) error {
 		return err
 	}
 	log := newLogger(cfg, os.Stderr)
+	if err := loadLocales(cfg, log); err != nil {
+		return err
+	}
 	audit := log.With("audit", true)
 	if cfg.Log.AuditFile != "" {
 		f, err := os.OpenFile(cfg.Log.AuditFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)

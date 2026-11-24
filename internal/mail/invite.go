@@ -12,6 +12,7 @@ import (
 	gomail "github.com/emersion/go-message/mail"
 
 	"github.com/ibuben/squareball/internal/calendar"
+	"github.com/ibuben/squareball/internal/locale"
 )
 
 // Invite — событие из части text/calendar письма (iTIP, RFC 5546): приглашение,
@@ -195,35 +196,15 @@ type InviteReply struct {
 	Subject   string // тема исходного письма — если в событии нет SUMMARY
 	MessageID string // исходного письма, для In-Reply-To
 	Hostname  string
-	Lang      string // язык темы и текста: "ru" или английский по умолчанию
-}
-
-// Тема и текст ответа по языку; %[1]s — кто отвечает, %[2]s — название события.
-var replyPrefix = map[string]map[string]string{
-	"en": {PartAccepted: "Accepted", PartTentative: "Tentative", PartDeclined: "Declined"},
-	"ru": {PartAccepted: "Принято", PartTentative: "Под вопросом", PartDeclined: "Отклонено"},
-}
-var replyBody = map[string]map[string]string{
-	"en": {
-		PartAccepted:  "%[1]s has accepted the invitation “%[2]s”.\r\n",
-		PartTentative: "%[1]s has tentatively accepted the invitation “%[2]s”.\r\n",
-		PartDeclined:  "%[1]s has declined the invitation “%[2]s”.\r\n",
-	},
-	"ru": {
-		PartAccepted:  "%[1]s принимает приглашение «%[2]s».\r\n",
-		PartTentative: "%[1]s под вопросом принимает приглашение «%[2]s».\r\n",
-		PartDeclined:  "%[1]s отклоняет приглашение «%[2]s».\r\n",
-	},
+	Lang      string // язык темы и текста: код языка (internal/locale)
 }
 
 // BuildInviteReply собирает письмо организатору с text/calendar; method=REPLY.
 // Возвращает письмо и адрес организатора (получатель конверта).
 func BuildInviteReply(r InviteReply) ([]byte, string, error) {
 	lang := r.Lang
-	if replyPrefix[lang] == nil {
-		lang = "en"
-	}
-	if replyPrefix[lang][r.PartStat] == "" {
+	ps := strings.ToLower(r.PartStat)
+	if r.PartStat != PartAccepted && r.PartStat != PartTentative && r.PartStat != PartDeclined {
 		return nil, "", fmt.Errorf("invalid partstat %q", r.PartStat)
 	}
 	cal, err := decodeCalendar(r.ICS)
@@ -300,7 +281,7 @@ func BuildInviteReply(r InviteReply) ([]byte, string, error) {
 	mh.SetAddressList("From", toMail([]Address{r.From}))
 	orgName := strings.Trim(org.Params.Get(ical.ParamCommonName), `"`)
 	mh.SetAddressList("To", []*gomail.Address{{Name: orgName, Address: to}})
-	mh.SetSubject(replyPrefix[lang][r.PartStat] + ": " + summary)
+	mh.SetSubject(locale.S(lang, "invite.reply."+ps) + ": " + summary)
 	host := r.Hostname
 	if host == "" {
 		_, host, _ = strings.Cut(r.From.Email, "@")
@@ -324,7 +305,7 @@ func BuildInviteReply(r InviteReply) ([]byte, string, error) {
 	if r.From.Name != "" {
 		who = r.From.Name + " <" + r.From.Email + ">"
 	}
-	body := fmt.Sprintf(replyBody[lang][r.PartStat], who, summary)
+	body := fmt.Sprintf(locale.S(lang, "invite.reply.body."+ps), who, summary)
 	if c := strings.TrimSpace(r.Comment); c != "" {
 		body += "\r\n" + c + "\r\n"
 	}

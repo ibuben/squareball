@@ -1,4 +1,5 @@
 // Клиент внутреннего API BFF. CSRF-токен приходит при входе и в /auth/me.
+import type { LangInfo } from './i18n'
 
 export interface Address { name?: string; email: string }
 export interface Brand {
@@ -8,7 +9,7 @@ export interface Brand {
 }
 export interface UIConfig {
   brand: Brand; theme: 'light' | 'dark' | 'system'; default_domain: string
-  default_language: string; languages: string[]
+  default_language: string; languages: LangInfo[]
 }
 export interface Me {
   mailbox: string

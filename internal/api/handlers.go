@@ -17,6 +17,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/ibuben/squareball/ext"
+	"github.com/ibuben/squareball/internal/locale"
 	"github.com/ibuben/squareball/internal/mail"
 	"github.com/ibuben/squareball/internal/password"
 	"github.com/ibuben/squareball/internal/sanitize"
@@ -27,6 +28,7 @@ import (
 func (s *Server) routes(static http.Handler) {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/config", s.handleConfig)
+	m.HandleFunc("GET /api/v1/locales/{code}", s.handleLocale)
 	m.HandleFunc("GET /brand/{name}", s.handleBrandAsset)
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	m.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
@@ -72,9 +74,43 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"brand":            s.brandFor(r),
 		"theme":            s.cfg.UI.Theme,
 		"default_language": s.cfg.UI.DefaultLanguage,
-		"languages":        s.cfg.UI.Languages,
+		"languages":        s.languages(),
 		"default_domain":   s.cfg.Login.DefaultDomain,
 	})
+}
+
+// languages — языки для выбора: код, название и (для языковых пакетов) локаль дат.
+// Строки пакета клиент загружает отдельно — GET /api/v1/locales/{code}.
+func (s *Server) languages() []map[string]any {
+	codes := s.cfg.UI.Languages
+	if len(codes) == 0 {
+		codes = locale.All()
+	}
+	out := []map[string]any{}
+	for _, c := range codes {
+		if !locale.Known(c) {
+			continue
+		}
+		l := map[string]any{"code": c, "name": locale.Name(c)}
+		if locale.UI(c) != nil {
+			l["pack"] = true
+			if d := locale.DateLocale(c); d != "" {
+				l["date_locale"] = d
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+func (s *Server) handleLocale(w http.ResponseWriter, r *http.Request) {
+	ui := locale.UI(r.PathValue("code"))
+	if ui == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	writeJSON(w, http.StatusOK, ui)
 }
 
 // --- вход и выход ------------------------------------------------------------

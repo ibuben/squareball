@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/ibuben/squareball/ext"
+	"github.com/ibuben/squareball/internal/locale"
 )
 
 // Source — имя источника сессий: в аудите и в imap.impersonation.allowed_sources.
@@ -311,38 +312,19 @@ func landing(c Claims) string {
 	return "/?" + q.Encode()
 }
 
-// failTexts — страница ошибки входа по языку пользователя (core.Lang).
-var failTexts = map[string]map[string]string{
-	"en": {
-		"title":       "Mail sign-in",
-		"bad_link":    "The sign-in link is invalid or has expired. Open your mail from the control panel again.",
-		"unavailable": "Could not open the mailbox. Try again later or contact support.",
-		"password":    "Sign in with password",
-	},
-	"ru": {
-		"title":       "Вход в почту",
-		"bad_link":    "Ссылка для входа недействительна или устарела. Откройте почту из панели ещё раз.",
-		"unavailable": "Не удалось открыть почтовый ящик. Попробуйте позже или обратитесь в поддержку.",
-		"password":    "Войти по паролю",
-	},
-}
-
 func (a *Adapter) fail(w http.ResponseWriter, r *http.Request, status int, reason string) {
 	if a.cfg.ErrorURL != "" {
 		http.Redirect(w, r, a.cfg.ErrorURL, http.StatusSeeOther)
 		return
 	}
 	lang := a.core.Lang(r)
-	tx, ok := failTexts[lang]
-	if !ok {
-		lang, tx = "en", failTexts["en"]
-	}
+	tx := func(k string) string { return locale.S(lang, "sso."+k) }
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html><html lang="%s"><meta charset="utf-8"><meta name="viewport" content="width=device-width">`+
 		`<title>%s</title><body style="font:16px system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px">`+
 		`<p>%s</p><p><a href="%s/">%s</a></p></body>`,
-		lang, html.EscapeString(tx["title"]), html.EscapeString(tx[reason]), html.EscapeString(a.core.BasePath(r)), html.EscapeString(tx["password"]))
+		lang, html.EscapeString(tx("title")), html.EscapeString(tx(reason)), html.EscapeString(a.core.BasePath(r)), html.EscapeString(tx("password")))
 }
 
 // --- служебный API ----------------------------------------------------------------

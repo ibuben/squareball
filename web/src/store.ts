@@ -4,7 +4,7 @@ import {
   type Prefs, type Summary, type Template, type UIConfig,
 } from './api'
 import { applyBrand } from './brand'
-import { availableLangs, isLang, setDefaultLang, setLang, t, type Key } from './i18n'
+import { availableLangs, isLang, langReady, setDefaultLang, setLang, setServerLangs, t, type Key } from './i18n'
 
 export interface ComposeInit {
   to?: Address[]; cc?: Address[]; bcc?: Address[]; subject?: string
@@ -504,9 +504,11 @@ async function loadConfig() {
   try {
     const c = await api.config()
     state.config = c
+    setServerLangs(c.languages)
     setDefaultLang(c.default_language)
     if (!storedTheme() && THEMES.includes(c.theme)) { state.theme = c.theme; applyTheme() }
   } catch { /* экран входа работает и без конфига */ }
+  await langReady()
 }
 
 // Язык и тема из адреса: /?lang=ru&theme=dark. Так их передаёт панель при входе по SSO,
@@ -517,7 +519,7 @@ function applyUrlPrefs() {
   const l = u.searchParams.get('lang')
   const th = u.searchParams.get('theme') as Theme | null
   if (l === null && th === null) return
-  if (isLang(l) && availableLangs(state.config?.languages).includes(l)) setLang(l)
+  if (isLang(l) && availableLangs().includes(l)) setLang(l)
   if (th && THEMES.includes(th)) setTheme(th)
   u.searchParams.delete('lang')
   u.searchParams.delete('theme')

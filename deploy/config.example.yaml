@@ -66,11 +66,13 @@ smtp:
 # css_vars — тонкая настройка любых CSS-переменных из web/src/styles.css, поверх расчёта.
 # hide_about: true — убрать кнопку и окно «О программе».
 # Язык интерфейса: default_language — для тех, кто ещё не выбрал язык сам (на экране
-# входа или в настройках); languages — какие языки предлагать (есть en и ru).
+# входа или в настройках); languages — какие языки предлагать (по умолчанию все:
+# встроенные en и ru и языковые пакеты из locales_dir, см. README).
 # theme — тема по умолчанию: light, dark или system.
 # ui:
 #   default_language: en
 #   languages: [en, ru]
+#   locales_dir: /usr/share/webmail/locales
 #   theme: system
 #   brand:
 #     name: "Почта"

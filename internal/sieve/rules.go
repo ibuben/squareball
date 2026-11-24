@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/ibuben/squareball/internal/locale"
 )
 
 // Модель фильтров, которую показывает форма. Скрипт хранится в формате
@@ -61,15 +63,6 @@ var ErrUnsupported = errors.New("script uses constructs not supported by the rul
 
 func unsupported(f string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrUnsupported, fmt.Sprintf(f, a...))
-}
-
-// Имена служебных правил и шапка скрипта — видны в других клиентах (Roundcube и т. п.).
-// При разборе имена не важны: автоответ и пересылка узнаются по содержимому.
-type scriptText struct{ vacation, forward, header string }
-
-var scriptTexts = map[string]scriptText{
-	"en": {"Vacation", "Forwarding", "# Mail filters. Rules in Roundcube managesieve format (# rule:[...]).\n"},
-	"ru": {"Автоответ", "Пересылка", "# Фильтры почты. Правила в формате Roundcube managesieve (# rule:[...]).\n"},
 }
 
 var ruleMarker = regexp.MustCompile(`^\s*rule:\[(.*)\]\s*$`)
@@ -631,12 +624,11 @@ func writeRule(b *strings.Builder, name string, enabled bool, test string, actio
 }
 
 // Script генерирует Sieve-скрипт. Порядок: автоответ, пересылка, правила.
-// lang — язык имён служебных правил ("ru" или английский по умолчанию).
+// lang — язык имён служебных правил (код из internal/locale).
 func (rs *Ruleset) Script(lang string) string {
-	tx, ok := scriptTexts[lang]
-	if !ok {
-		tx = scriptTexts["en"]
-	}
+	// Имена служебных правил и шапка скрипта видны в других клиентах (Roundcube и т. п.).
+	// При разборе имена не важны: автоответ и пересылка узнаются по содержимому.
+	tx := func(k string) string { return locale.S(lang, "sieve."+k) }
 	req := map[string]bool{}
 	var body strings.Builder
 
@@ -665,7 +657,7 @@ func (rs *Ruleset) Script(lang string) string {
 			cmd += " :addresses " + qlist(v.Addresses)
 		}
 		cmd += " " + q(v.Body) + ";"
-		writeRule(&body, tx.vacation, v.Enabled, test, []string{cmd})
+		writeRule(&body, tx("vacation"), v.Enabled, test, []string{cmd})
 	}
 
 	if f := rs.Forward; f.To != "" {
@@ -676,7 +668,7 @@ func (rs *Ruleset) Script(lang string) string {
 		} else {
 			acts = []string{"redirect " + q(f.To) + ";", "stop;"}
 		}
-		writeRule(&body, tx.forward, f.Enabled, "true", acts)
+		writeRule(&body, tx("forward"), f.Enabled, "true", acts)
 	}
 
 	for _, r := range rs.Rules {
@@ -703,7 +695,7 @@ func (rs *Ruleset) Script(lang string) string {
 	}
 
 	var out strings.Builder
-	out.WriteString(tx.header)
+	out.WriteString(tx("header"))
 	if len(req) > 0 {
 		names := make([]string, 0, len(req))
 		for k := range req {

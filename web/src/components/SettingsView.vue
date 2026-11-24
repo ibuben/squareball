@@ -4,7 +4,7 @@ import {
   BookOpen, FileText, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, SpellCheck, UserRound,
 } from 'lucide-vue-next'
 import { loadPrefs, savePrefs, setTheme, state } from '../store'
-import { availableLangs, lang, LANGS, setLang, t, type Key, type Lang } from '../i18n'
+import { availableLangs, lang, langName, setLang, t, type Key } from '../i18n'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
 import VacationSettings from './settings/VacationSettings.vue'
@@ -37,7 +37,7 @@ const mdnModes = [
   { v: 'never' as const, label: 'set.mdnNever' as Key },
 ]
 void loadPrefs()
-const langs = () => availableLangs(state.config?.languages)
+const langs = () => availableLangs()
 </script>
 
 <template>
@@ -76,8 +76,8 @@ const langs = () => availableLangs(state.config?.languages)
           <label class="check"><input type="radio" value="dark" :checked="state.theme === 'dark'" @change="setTheme('dark')" /> {{ t('set.themeDark') }}</label>
           <label class="check"><input type="radio" value="system" :checked="state.theme === 'system'" @change="setTheme('system')" /> {{ t('theme.system') }}</label>
           <label v-if="langs().length > 1" class="lang">{{ t('login.language') }}
-            <select class="input" :value="lang()" data-test="settings-lang" @change="setLang(($event.target as HTMLSelectElement).value as Lang)">
-              <option v-for="l in langs()" :key="l" :value="l">{{ LANGS[l] }}</option>
+            <select class="input" :value="lang()" data-test="settings-lang" @change="setLang(($event.target as HTMLSelectElement).value)">
+              <option v-for="l in langs()" :key="l" :value="l">{{ langName(l) }}</option>
             </select>
           </label>
         </div>

@@ -174,7 +174,8 @@ type PasswordHTTP struct {
 
 type UI struct {
 	DefaultLanguage string   `yaml:"default_language"`
-	Languages       []string `yaml:"languages"`
+	Languages       []string `yaml:"languages"` // пусто — все доступные: встроенные и из locales_dir
+	LocalesDir      string   `yaml:"locales_dir"` // языковые пакеты <код>.json, см. internal/locale
 	Theme           string   `yaml:"theme"`
 	Brand           Brand    `yaml:"brand"`
 	Attachments     struct {
@@ -368,7 +369,6 @@ func Defaults() *Config {
 	c.Password.HTTP.Timeout = 10 * time.Second
 	c.Password.HTTP.TLSVerify = true
 	c.UI.DefaultLanguage = "en"
-	c.UI.Languages = []string{"en", "ru"}
 	c.UI.Theme = "system"
 	c.UI.Brand.Name = "Webmail"
 	c.UI.Attachments.MaxUpload = 25 << 20
@@ -508,7 +508,7 @@ func (c *Config) Validate() error {
 		add("ui.attachments.remote_images: must be ask, always or never")
 	}
 	c.UI.Brand.validate(add)
-	if !contains(c.UI.Languages, c.UI.DefaultLanguage) {
+	if len(c.UI.Languages) > 0 && !contains(c.UI.Languages, c.UI.DefaultLanguage) {
 		add("ui.default_language: must be one of ui.languages")
 	}
 	if !contains([]string{"light", "dark", "system"}, c.UI.Theme) {
