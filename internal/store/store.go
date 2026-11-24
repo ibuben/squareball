@@ -259,6 +259,7 @@ func (s *Store) DeleteMailbox(ctx context.Context, mailbox string) error {
 		`DELETE FROM prefs WHERE mailbox = ?`,
 		`DELETE FROM templates WHERE mailbox = ?`,
 		`DELETE FROM spell_words WHERE mailbox = ?`,
+		davCleanup, // после contacts: карточки внешних книг удалены выше
 	} {
 		if _, err := s.db.ExecContext(ctx, q, mailbox); err != nil {
 			return err

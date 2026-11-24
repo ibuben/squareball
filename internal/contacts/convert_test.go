@@ -85,3 +85,36 @@ func TestCSVExportReimports(t *testing.T) {
 		t.Fatalf("%v %+v", err, out)
 	}
 }
+
+func TestMergeVCardKeepsUnknownFields(t *testing.T) {
+	raw := "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:u1\r\nFN:Old\r\nN:Old;Name;Mid;;\r\nORG:Acme;Sales\r\n" +
+		"EMAIL;TYPE=work;PREF=1:a@x.test\r\nEMAIL:gone@x.test\r\nTEL;TYPE=cell:+1 555\r\nADR:;;Street 1;City;;;\r\nBDAY:19900101\r\nX-CUSTOM:keep\r\nEND:VCARD\r\n"
+	c := store.Contact{First: "Иван", Last: "Петров", Org: "Новая", Emails: []store.Labeled{{Value: "a@x.test", Label: "home"}, {Value: "new@x.test"}},
+		Phones: []store.Labeled{{Value: "+1 555", Label: "mobile"}}}
+	out, err := MergeVCard([]byte(raw), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"VERSION:4.0", "UID:u1", "FN:Иван Петров", "N:Петров;Иван;Mid;;", "ORG:Новая;Sales", "PREF=1",
+		"TYPE=home", "new@x.test", "TEL;TYPE=cell:+1 555", "ADR:;;Street 1;City;;;", "BDAY:19900101", "X-CUSTOM:keep", "REV:"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "gone@x.test") || strings.Contains(s, "TYPE=work") {
+		t.Errorf("removed values remain:\n%s", s)
+	}
+	back, err := FromVCard(out)
+	if err != nil || back.First != "Иван" || len(back.Emails) != 2 {
+		t.Fatalf("round trip: %+v %v", back, err)
+	}
+	// Новая карточка получает UID и версию.
+	fresh, _ := MergeVCard(nil, store.Contact{Name: "Новый"})
+	if !strings.Contains(string(fresh), "UID:") || !strings.Contains(string(fresh), "VERSION:3.0") {
+		t.Fatalf("new card:\n%s", fresh)
+	}
+	if !IsGroupCard([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nKIND:group\r\nFN:G\r\nEND:VCARD\r\n")) || IsGroupCard(fresh) {
+		t.Fatal("IsGroupCard")
+	}
+}

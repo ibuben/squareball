@@ -46,6 +46,7 @@ func (s *Server) routes(static http.Handler) {
 	s.templateRoutes()
 	s.mboxRoutes()
 	s.spellRoutes()
+	s.bookRoutes()
 	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
 	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
 	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))
@@ -174,6 +175,7 @@ func (s *Server) meBody(r *http.Request, mailbox, csrf string) map[string]any {
 			"password_change": pw,
 			"sieve":           s.cfg.Sieve.Enabled,
 			"spellcheck":      s.spellFeature(),
+			"contact_books":   s.contactSrc() != nil,
 		},
 		"limits": map[string]int64{
 			"max_upload":     int64(s.cfg.UI.Attachments.MaxUpload),

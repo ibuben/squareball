@@ -9,6 +9,7 @@ export interface Me {
   features: {
     password_change: boolean; sieve: boolean
     spellcheck: { engine: 'browser' | 'hunspell' | 'off'; dictionaries: string[] }
+    contact_books: boolean
   }
   limits: { max_upload: number; max_recipients: number }
   remote_images: 'ask' | 'always' | 'never'
@@ -54,7 +55,12 @@ export interface Labeled { value: string; label?: string }
 export interface Contact {
   id: number; name: string; first_name: string; last_name: string; org: string; title: string; notes: string
   emails: Labeled[]; phones: Labeled[]; groups: number[]; updated_at?: string
+  book?: number // 0 — личная книга, иначе внешняя
 }
+export type BookError = '' | 'auth' | 'forbidden' | 'not_found' | 'unavailable' | 'too_many'
+export interface Book { id: number; account: number; name: string; readonly: boolean; error?: BookError; synced_at: string; count: number }
+export interface BookAccount { id: number; preset?: string; name: string; url: string; username: string; error?: BookError; synced_at: string }
+export interface Books { enabled: boolean; allow_user_accounts: boolean; accounts: BookAccount[]; books: Book[]; stale?: boolean }
 export interface Group { id: number; name: string; count: number }
 export interface Collected { email: string; name: string; uses: number; last_used: string }
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
@@ -159,10 +165,15 @@ export const api = {
   identities: () => request<{ identities: Identity[]; level: 'single' | 'domain' | 'any' }>('GET', '/api/v1/identities'),
   saveIdentity: (i: Partial<Identity>) => request<Identity>('POST', '/api/v1/identities', i),
   deleteIdentity: (id: number) => request('POST', '/api/v1/identities/delete', { id }),
-  contacts: (q = '', group = 0, offset = 0, limit = 200) =>
-    request<{ contacts: Contact[]; total: number }>('GET', `/api/v1/contacts?${q_({ q, group: group || undefined, offset, limit })}`),
+  contacts: (q = '', group = 0, offset = 0, limit = 200, book?: number) =>
+    request<{ contacts: Contact[]; total: number }>('GET', `/api/v1/contacts?${q_({ q, group: group || undefined, offset, limit, book })}`),
+  books: () => request<Books>('GET', '/api/v1/books'),
+  syncBooks: (force = false, account = 0) => request<Books>('POST', '/api/v1/books/sync', { force, account }),
+  addBookAccount: (a: { name: string; url: string; username: string; password: string }) =>
+    request<Books>('POST', '/api/v1/books/accounts', a),
+  deleteBookAccount: (id: number) => request<Books>('POST', '/api/v1/books/accounts/delete', { id }),
   saveContact: (c: Partial<Contact>) => request<Contact>('POST', '/api/v1/contacts', c),
-  deleteContacts: (ids: number[]) => request<{ deleted: number }>('POST', '/api/v1/contacts/delete', { ids }),
+  deleteContacts: (ids: number[]) => request<{ deleted: number; failed?: number }>('POST', '/api/v1/contacts/delete', { ids }),
   suggest: (q: string) => request<{ suggestions: Suggestion[] }>('GET', `/api/v1/contacts/suggest?${q_({ q })}`),
   collected: (q = '') => request<{ collected: Collected[] }>('GET', `/api/v1/contacts/collected?${q_({ q })}`),
   deleteCollected: (emails: string[]) => request('POST', '/api/v1/contacts/collected/delete', { emails }),

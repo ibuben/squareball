@@ -44,6 +44,10 @@ type Core interface {
 	// должен указывать на имя, которое регистрирует адаптер).
 	SetPasswordChanger(name string, pc PasswordChanger)
 	SetBrandProvider(bp BrandProvider)
+	// SetContactSource подключает внешние адресные книги (например, CardDAV).
+	// Учётки, кэш контактов и синхронизацию ведёт ядро; источник отвечает
+	// только за протокол. Один источник на установку.
+	SetContactSource(cs ContactSource)
 }
 
 // AuthMode — способ, которым ядро аутентифицируется в IMAP/SMTP для сессии.
@@ -111,4 +115,74 @@ var (
 	ErrRateLimited   = errors.New("too many attempts")
 	ErrUnavailable   = errors.New("service unavailable")
 	ErrNotSupported  = errors.New("not supported")
+)
+
+// --- внешние адресные книги ------------------------------------------------------
+
+// ContactAccount — учётка внешнего сервера контактов.
+type ContactAccount struct {
+	URL      string // адрес, введённый пользователем или из пресета
+	Username string
+	Password string
+	// Trusted — учётка из конфига администратора (пресет). Для учёток,
+	// добавленных пользователем, источник обязан запрещать обращения
+	// во внутренние сети (SSRF), если администратор явно не разрешил.
+	Trusted bool
+}
+
+// ContactPreset — книга, которую администратор подключает всем ящикам.
+// Пароль: PasswordSession — пароль ящика из текущей сессии (не сохраняется),
+// иначе — заданный в конфиге адаптера.
+type ContactPreset struct {
+	ID       string // постоянный идентификатор пресета в конфиге
+	Name     string
+	Account  ContactAccount
+	ReadOnly bool
+}
+
+// PasswordSession — значение ContactAccount.Password у пресета, которое ядро
+// заменяет паролем ящика из сессии.
+const PasswordSession = "\x00session"
+
+// RemoteBook — книга на сервере.
+type RemoteBook struct {
+	URL      string // абсолютный URL коллекции
+	Name     string
+	ReadOnly bool
+}
+
+// RemoteCard — карточка: адрес на сервере, ETag и vCard как есть.
+type RemoteCard struct {
+	Href  string
+	ETag  string
+	VCard []byte
+}
+
+type ContactSource interface {
+	// Presets — книги, подключённые администратором для ящика (могут
+	// зависеть от домена). Пусто — пресетов нет.
+	Presets(mailbox string) []ContactPreset
+	// AllowUserAccounts — может ли пользователь подключать свои серверы.
+	AllowUserAccounts() bool
+	// Discover находит книги учётки (по адресу сервера, принципала или самой книги).
+	Discover(ctx context.Context, acc ContactAccount) ([]RemoteBook, error)
+	// List возвращает href → ETag всех карточек книги.
+	List(ctx context.Context, acc ContactAccount, book string) (map[string]string, error)
+	// Get загружает карточки по href (до 100 за вызов).
+	Get(ctx context.Context, acc ContactAccount, book string, hrefs []string) ([]RemoteCard, error)
+	// Put создаёт карточку (href == "", тогда источник выбирает имя сам) или
+	// заменяет её при совпадении ETag. Возвращает новые href и ETag (ETag может
+	// быть пустым, если сервер его не прислал).
+	Put(ctx context.Context, acc ContactAccount, book, href, etag string, vcard []byte) (newHref, newETag string, err error)
+	// Delete удаляет карточку при совпадении ETag.
+	Delete(ctx context.Context, acc ContactAccount, book, href, etag string) error
+}
+
+// Ошибки источника контактов.
+var (
+	ErrContactAuth      = errors.New("contact server rejected credentials")
+	ErrContactConflict  = errors.New("contact changed on server")
+	ErrContactReadOnly  = errors.New("contact book is read-only")
+	ErrContactNotFound  = errors.New("contact book or card not found")
+	ErrContactForbidden = errors.New("address is not allowed")
 )

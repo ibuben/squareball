@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
-  BookUser, Download, History, Mail, Pencil, Phone, Plus, Search, Trash2, Upload, UserPlus, Users, X,
+  AlertTriangle, BookUser, Download, History, Library, Lock, Mail, Pencil, Phone, Plus, RefreshCw, Search, Server, Trash2, Upload,
+  UserPlus, Users, X,
 } from 'lucide-vue-next'
-import { api, ApiError, type Collected, type Contact, type Group, type Labeled } from '../api'
+import { api, ApiError, type Book, type BookError, type Books, type Collected, type Contact, type Group, type Labeled } from '../api'
 import Avatar from './Avatar.vue'
-import { openCompose, toast } from '../store'
+import { openCompose, state, toast } from '../store'
 
-type Source = { kind: 'all' } | { kind: 'group'; id: number } | { kind: 'collected' }
+type Source = { kind: 'all' } | { kind: 'group'; id: number } | { kind: 'collected' } | { kind: 'book'; id: number }
 
 const source = ref<Source>({ kind: 'all' })
 const groups = ref<Group[]>([])
@@ -22,6 +23,78 @@ const error = ref('')
 const fileInput = ref<HTMLInputElement>()
 
 const groupId = computed(() => (source.value.kind === 'group' ? source.value.id : 0))
+const bookId = computed(() => (source.value.kind === 'book' ? source.value.id : undefined))
+
+// --- внешние адресные книги (CardDAV) ----------------------------------------------
+const books = ref<Books | null>(null)
+const syncing = ref(false)
+const hasBooks = computed(() => !!books.value?.enabled && (books.value.books.length > 0 || books.value.accounts.length > 0))
+const bookOf = (c: Contact) => books.value?.books.find((b) => b.id === c.book)
+const readonly = (c: Contact) => !!bookOf(c)?.readonly
+const writableBooks = computed(() => books.value?.books.filter((b) => !b.readonly) ?? [])
+const bookErrors: Record<Exclude<BookError, ''>, string> = {
+  auth: 'сервер не принял логин или пароль',
+  forbidden: 'адрес во внутренней сети запрещён',
+  not_found: 'книга не найдена',
+  unavailable: 'сервер недоступен',
+  too_many: 'слишком много контактов',
+}
+const errText = (e?: BookError) => (e ? bookErrors[e] : '')
+const accountName = (id: number) => books.value?.accounts.find((a) => a.id === id)?.name ?? ''
+
+async function loadBooks() {
+  if (!state.me?.features.contact_books) return
+  try {
+    books.value = await api.books()
+    if (books.value.stale) await syncBooks(false)
+  } catch (e) { report(e) }
+}
+// Счётчики книг после правок (без похода на серверы).
+async function refreshBooks() {
+  if (books.value?.enabled) try { books.value = await api.books() } catch { /* не критично */ }
+}
+async function syncBooks(force = true) {
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    books.value = await api.syncBooks(force)
+    await load()
+  } catch (e) { report(e) } finally { syncing.value = false }
+}
+
+const accountForm = ref<{ name: string; url: string; username: string; password: string } | null>(null)
+const accountError = ref('')
+const accountBusy = ref(false)
+const accountErrors: Record<string, string> = {
+  'books.auth': 'Сервер не принял логин или пароль.',
+  'books.forbidden': 'Этот адрес находится во внутренней сети — подключать его запрещено.',
+  'books.not_found': 'По этому адресу не нашлось адресных книг. Проверьте адрес: обычно это адрес сервера или ссылка на книгу из его настроек.',
+  'books.unavailable': 'Сервер не отвечает или отвечает не по протоколу CardDAV.',
+  'books.url': 'Нужен адрес вида https://сервер/…',
+  'books.limit': 'Подключено слишком много серверов.',
+}
+async function addAccount() {
+  const f = accountForm.value
+  if (!f) return
+  accountBusy.value = true
+  accountError.value = ''
+  try {
+    books.value = await api.addBookAccount(f)
+    accountForm.value = null
+    toast('Адресная книга подключена')
+    await load()
+  } catch (e) {
+    accountError.value = e instanceof ApiError ? accountErrors[e.code] ?? 'Не удалось подключить книгу' : String(e)
+  } finally { accountBusy.value = false }
+}
+async function removeAccount(id: number) {
+  if (!confirm(`Отключить «${accountName(id)}»? Контакты этой книги пропадут из списка, на сервере они останутся.`)) return
+  try {
+    books.value = await api.deleteBookAccount(id)
+    if (source.value.kind === 'book' && !books.value.books.some((b) => b.id === (source.value as { id: number }).id)) choose({ kind: 'all' })
+    else await load()
+  } catch (e) { report(e) }
+}
 const labels: Record<string, string> = { work: 'рабочий', home: 'домашний', mobile: 'мобильный', other: 'другой' }
 
 async function loadGroups() {
@@ -32,19 +105,31 @@ async function load() {
     if (source.value.kind === 'collected') {
       collected.value = (await api.collected(search.value)).collected
     } else {
-      const r = await api.contacts(search.value, groupId.value)
+      const r = await api.contacts(search.value, groupId.value, 0, 200, bookId.value)
       contacts.value = r.contacts
       total.value = r.total
       if (current.value) current.value = r.contacts.find((c) => c.id === current.value!.id) ?? null
     }
   } catch (e) { report(e) }
 }
+const remoteErrors: Record<string, string> = {
+  'contacts.conflict': 'Контакт изменили на сервере. Список обновлён — повторите правку.',
+  'contacts.readonly': 'Эта адресная книга только для чтения.',
+  'contacts.remote_auth': 'Сервер адресной книги не принял логин или пароль.',
+  'contacts.remote_unavailable': 'Сервер адресной книги недоступен. Попробуйте позже.',
+  'contacts.remote_not_found': 'Контакт или книга не найдены на сервере.',
+}
+function errorText(e: unknown): string {
+  if (e instanceof ApiError) return remoteErrors[e.code] ?? (e.detail || 'Не удалось выполнить действие')
+  return 'Не удалось выполнить действие'
+}
 function report(e: unknown) {
   console.error(e)
-  toast(e instanceof ApiError && e.detail ? e.detail : 'Не удалось выполнить действие')
+  toast(errorText(e))
+  if (e instanceof ApiError && e.code === 'contacts.conflict') void syncBooks()
 }
 
-onMounted(async () => { await Promise.all([loadGroups(), load()]) })
+onMounted(async () => { await Promise.all([loadGroups(), load(), loadBooks()]) })
 
 function choose(s: Source) {
   source.value = s
@@ -62,7 +147,8 @@ function display(c: Contact) {
 
 function blank(): Contact {
   return { id: 0, name: '', first_name: '', last_name: '', org: '', title: '', notes: '',
-    emails: [{ value: '', label: 'work' }], phones: [], groups: groupId.value ? [groupId.value] : [] }
+    emails: [{ value: '', label: 'work' }], phones: [], groups: groupId.value ? [groupId.value] : [],
+    book: bookId.value && writableBooks.value.some((b) => b.id === bookId.value) ? bookId.value : 0 }
 }
 function startEdit(c?: Contact) {
   error.value = ''
@@ -79,19 +165,21 @@ async function save() {
     editing.value = null
     current.value = saved
     toast('Контакт сохранён')
-    await Promise.all([load(), loadGroups()])
+    await Promise.all([load(), loadGroups(), refreshBooks()])
   } catch (e) {
-    error.value = e instanceof ApiError ? e.detail || e.code : String(e)
+    error.value = errorText(e)
+    if (e instanceof ApiError && e.code === 'contacts.conflict') void syncBooks()
   }
 }
 
 async function removeSelected(ids: number[]) {
   if (!ids.length || !confirm(ids.length === 1 ? 'Удалить контакт?' : `Удалить контакты (${ids.length})?`)) return
   try {
-    await api.deleteContacts(ids)
+    const r = await api.deleteContacts(ids)
+    if (r.failed) toast(`Не удалось удалить: ${r.failed} (книга только для чтения или контакт изменили на сервере)`)
     selected.value = new Set()
     if (current.value && ids.includes(current.value.id)) current.value = null
-    await Promise.all([load(), loadGroups()])
+    await Promise.all([load(), loadGroups(), refreshBooks()])
   } catch (e) { report(e) }
 }
 
@@ -164,9 +252,41 @@ async function forgetCollected(c: Collected) {
       <button class="src" :class="{ on: source.kind === 'all' }" @click="choose({ kind: 'all' })">
         <BookUser :size="16" /> Все контакты
       </button>
+      <button v-if="hasBooks" class="src" :class="{ on: source.kind === 'book' && source.id === 0 }" data-book="0"
+              @click="choose({ kind: 'book', id: 0 })">
+        <BookUser :size="16" /> Личные
+      </button>
       <button class="src" :class="{ on: source.kind === 'collected' }" @click="choose({ kind: 'collected' })">
         <History :size="16" /> Собранные адреса
       </button>
+      <template v-if="books?.enabled">
+        <div class="sep row-sep">
+          <span>Адресные книги</span>
+          <button class="icon-btn mini vis" :class="{ spin: syncing }" title="Обновить с серверов" aria-label="Обновить адресные книги"
+                  data-test="books-sync" :disabled="syncing" @click="syncBooks()"><RefreshCw :size="13" /></button>
+        </div>
+        <template v-for="a in books.accounts" :key="a.id">
+          <div class="acct" :title="a.url">
+            <Server :size="13" /> <span class="ellipsis">{{ a.name }}</span>
+            <AlertTriangle v-if="a.error" :size="13" class="warn" :aria-label="errText(a.error)" />
+            <button v-if="!a.preset" class="icon-btn mini" :aria-label="`Отключить ${a.name}`" title="Отключить"
+                    @click="removeAccount(a.id)"><X :size="13" /></button>
+          </div>
+          <p v-if="a.error" class="acct-err">{{ errText(a.error) }}</p>
+          <button v-for="b in books.books.filter((b) => b.account === a.id)" :key="b.id" class="src"
+                  :class="{ on: source.kind === 'book' && source.id === b.id }" :data-book="b.id"
+                  :title="b.error ? errText(b.error) : b.readonly ? 'Только для чтения' : ''" @click="choose({ kind: 'book', id: b.id })">
+            <Library :size="16" /> <span class="ellipsis">{{ b.name }}</span>
+            <Lock v-if="b.readonly" :size="12" class="faint" aria-label="только для чтения" />
+            <AlertTriangle v-if="b.error" :size="13" class="warn" />
+            <span class="faint">{{ b.count }}</span>
+          </button>
+        </template>
+        <button v-if="books.allow_user_accounts" class="src add" data-test="books-add"
+                @click="accountForm = { name: '', url: '', username: state.me?.mailbox ?? '', password: '' }; accountError = ''">
+          <Plus :size="16" /> Подключить книгу
+        </button>
+      </template>
       <div class="sep">Группы</div>
       <div v-for="g in groups" :key="g.id" class="src grp" :class="{ on: source.kind === 'group' && source.id === g.id }"
            @click="choose({ kind: 'group', id: g.id })">
@@ -185,7 +305,9 @@ async function forgetCollected(c: Collected) {
       </div>
       <div v-if="source.kind !== 'collected'" class="toolbar">
         <button class="btn primary" @click="startEdit()"><UserPlus :size="15" /> Новый контакт</button>
-        <button class="icon-btn" title="Импорт vCard или CSV" aria-label="Импорт" @click="fileInput?.click()"><Upload :size="17" /></button>
+        <!-- Импорт идёт в личную книгу: во внешней книге кнопку не показываем. -->
+        <button v-if="!(bookId && bookId > 0)" class="icon-btn" title="Импорт vCard или CSV в личные контакты" aria-label="Импорт"
+                @click="fileInput?.click()"><Upload :size="17" /></button>
         <a class="icon-btn" title="Экспорт в vCard" aria-label="Экспорт vCard" :href="api.exportURL('vcf', groupId)"><Download :size="17" /></a>
         <a class="link small" :href="api.exportURL('csv', groupId)">CSV</a>
         <input ref="fileInput" type="file" accept=".vcf,.vcard,.csv,text/vcard,text/csv" hidden @change="importFile" />
@@ -228,6 +350,12 @@ async function forgetCollected(c: Collected) {
     <section class="detail scroll">
       <form v-if="editing" class="card" @submit.prevent="save">
         <h2>{{ editing.id ? 'Изменить контакт' : 'Новый контакт' }}</h2>
+        <label v-if="!editing.id && writableBooks.length">Книга
+          <select v-model="editing.book" class="input" data-test="contact-book">
+            <option :value="0">Личные</option>
+            <option v-for="b in writableBooks" :key="b.id" :value="b.id">{{ b.name }} · {{ accountName(b.account) }}</option>
+          </select>
+        </label>
         <div class="two">
           <label>Имя <input v-model="editing.first_name" class="input" /></label>
           <label>Фамилия <input v-model="editing.last_name" class="input" /></label>
@@ -277,8 +405,14 @@ async function forgetCollected(c: Collected) {
         </div>
         <div class="actions">
           <button v-if="current.emails.length" class="btn primary" @click="write([current])"><Mail :size="15" /> Написать</button>
-          <button class="btn" @click="startEdit(current)"><Pencil :size="15" /> Изменить</button>
-          <button class="btn" @click="removeSelected([current.id])"><Trash2 :size="15" /> Удалить</button>
+          <template v-if="!readonly(current)">
+            <button class="btn" @click="startEdit(current)"><Pencil :size="15" /> Изменить</button>
+            <button class="btn" @click="removeSelected([current.id])"><Trash2 :size="15" /> Удалить</button>
+          </template>
+        </div>
+        <div v-if="bookOf(current)" class="line faint small">
+          <Library :size="15" /> {{ bookOf(current)!.name }} · {{ accountName(bookOf(current)!.account) }}
+          <template v-if="readonly(current)"> · только для чтения</template>
         </div>
         <div v-for="e in current.emails" :key="e.value" class="line">
           <Mail :size="15" class="faint" />
@@ -296,6 +430,26 @@ async function forgetCollected(c: Collected) {
       </div>
       <p v-else class="faint empty">Выберите контакт</p>
     </section>
+
+    <div v-if="accountForm" class="overlay" @mousedown.self="accountForm = null">
+      <form class="card dialog" role="dialog" aria-label="Подключить адресную книгу" data-test="books-form" @submit.prevent="addAccount"
+            @keydown.esc="accountForm = null">
+        <h2>Подключить адресную книгу</h2>
+        <p class="faint small">CardDAV: Nextcloud, SOGo, Radicale, Baïkal, iCloud и другие. Укажите адрес сервера или ссылку на книгу
+          из его настроек. Контакты синхронизируются в обе стороны; пароль хранится на сервере почты в зашифрованном виде.</p>
+        <label>Адрес <input v-model="accountForm.url" class="input" type="url" required placeholder="https://cloud.example.com/remote.php/dav" data-test="books-url" /></label>
+        <div class="two">
+          <label>Логин <input v-model="accountForm.username" class="input" autocomplete="username" data-test="books-user" /></label>
+          <label>Пароль <input v-model="accountForm.password" class="input" type="password" autocomplete="new-password" data-test="books-password" /></label>
+        </div>
+        <label>Название <input v-model="accountForm.name" class="input" placeholder="по умолчанию — имя сервера" /></label>
+        <p v-if="accountError" class="error" role="alert">{{ accountError }}</p>
+        <div class="actions">
+          <button class="btn primary" :disabled="accountBusy">{{ accountBusy ? 'Подключение…' : 'Подключить' }}</button>
+          <button type="button" class="btn" @click="accountForm = null">Отмена</button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -344,6 +498,19 @@ h1 { font-size: 17px; margin: 0 8px 10px; }
 .line { display: flex; align-items: center; gap: 10px; }
 .notes { white-space: pre-wrap; margin: 4px 0 0; color: var(--text-2); }
 .empty { margin-top: 30vh; text-align: center; }
+.row-sep { display: flex; align-items: center; justify-content: space-between; }
+.mini.vis { opacity: 1; width: 24px; height: 24px; }
+.spin :deep(svg) { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.acct { display: flex; align-items: center; gap: 6px; margin: 6px 10px 2px; font-size: 12px; color: var(--text-2); }
+.acct .ellipsis { flex: 1; }
+.acct .mini { width: 22px; height: 22px; opacity: 0; }
+.acct:hover .mini, .acct .mini:focus-visible { opacity: 1; }
+@media (hover: none) { .acct .mini { opacity: 1; } }
+.acct-err { margin: 0 10px 4px; font-size: 12px; color: var(--danger); }
+.warn { color: var(--danger); flex: none; }
+.overlay { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 35%); }
+.dialog { width: min(560px, 100%); box-shadow: var(--shadow); }
 @media (max-width: 1100px) { .contacts { grid-template-columns: 200px 300px minmax(0, 1fr); } }
 @media (max-width: 760px) {
   .contacts { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; overflow: auto; }

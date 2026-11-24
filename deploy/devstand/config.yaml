@@ -26,3 +26,18 @@ sieve:
   port: 4190
   security: starttls
   tls_verify: false
+spellcheck:
+  engine: hunspell
+  hunspell:
+    dictionaries: [ru_RU, en_US, uz_UZ]
+adapters:
+  carddav:
+    enabled: true
+    allow_user_accounts: true
+    allow_private_networks: true   # стенд: Radicale на 127.0.0.1
+    presets:
+      - id: stand
+        name: Radicale стенда
+        url: http://127.0.0.1:5232/%l/
+        username: "%l"
+        password: session

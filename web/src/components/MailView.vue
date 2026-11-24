@@ -113,6 +113,8 @@ watch(() => state.folders.find((f) => f.role === 'inbox')?.unread ?? 0, (n) => {
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   await Promise.all([loadFolders(), loadPrefs()]) // режим цепочек нужен до первого списка
+  // Внешние адресные книги: освежить кэш для подсказок адресов (не чаще раза в 15 минут — решает сервер).
+  if (state.me?.features.contact_books) void api.syncBooks().catch(() => {})
   await openFolder(state.folders.find((f) => f.role === 'inbox')?.name ?? 'INBOX')
   void loadIdentities()
   connectEvents()

@@ -52,6 +52,10 @@ type Server struct {
 
 	spellEngine string         // browser | hunspell | off (hunspell без словарей → browser)
 	spell       *spell.Checker // только при engine: hunspell
+
+	contactSource ext.ContactSource // внешние адресные книги (адаптер)
+	sessionSecret []byte            // для ключа шифрования паролей внешних книг
+	davLocks      davLocks
 }
 
 type Options struct {
@@ -72,6 +76,8 @@ func New(o Options) (*Server, error) {
 		sendUser:  newLimiter(cfg.SMTP.RateLimit.PerUser),
 
 		pwnedClient: &http.Client{Timeout: 5 * time.Second},
+
+		sessionSecret: o.SessionSecret,
 	}
 	if s.store == nil {
 		return nil, errors.New("api: store is required")

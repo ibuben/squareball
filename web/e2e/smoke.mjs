@@ -18,7 +18,8 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 860 }, l
 const page = await ctx.newPage()
 page.on('pageerror', (e) => errors.push(e.message))
 // 401 до входа и при неверном пароле — ожидаемые ответы API, не ошибки.
-page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('status of 401')) errors.push(m.text()) })
+let expectHttpError = false // шаг намеренно получает ошибку от API
+page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('status of 401') && !expectHttpError) errors.push(m.text()) })
 const step = (name) => console.log('✓', name)
 const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` })
 
@@ -319,6 +320,75 @@ try {
   await page.locator('.src', { hasText: groupName }).getByRole('button', { name: 'Удалить группу' }).click()
   await page.locator('.src', { hasText: groupName }).waitFor({ state: 'detached' })
   await page.getByRole('button', { name: 'Почта' }).first().click()
+
+  // Внешняя адресная книга (CardDAV, Radicale стенда): пресет с паролем ящика и своя учётка.
+  const me = await (await page.request.get(`${BASE}/api/v1/auth/me`)).json()
+  if (me.features.contact_books) {
+    const dav = (p, method = 'GET') => fetch(`http://127.0.0.1:5232${p}`, {
+      method, headers: { Authorization: 'Basic ' + Buffer.from(`${USER1}:${PASS}`).toString('base64'), Depth: '1' } })
+    await page.getByRole('button', { name: 'Контакты' }).first().click()
+    const book = page.locator('.src', { hasText: 'Контакты Боба' })
+    await book.waitFor({ timeout: 15000 })
+    await book.click()
+    await page.getByRole('button', { name: 'Новый контакт' }).click()
+    const bform = page.locator('form.card')
+    await bform.locator('[data-test=contact-book]').waitFor()
+    if (await bform.locator('[data-test=contact-book] option:checked').textContent() === 'Личные') throw new Error('книга по умолчанию не выбрана')
+    await bform.getByLabel('Имя', { exact: true }).fill('Дав')
+    await bform.getByLabel('Фамилия').fill(`Карточкин ${stamp}`)
+    await bform.locator('input[type=email]').first().fill(`dav-${stamp}@example.org`)
+    await bform.getByRole('button', { name: 'Сохранить' }).click()
+    await page.locator('.item', { hasText: `Дав Карточкин ${stamp}` }).waitFor()
+    const listing = await (await dav(`/${USER1}/contacts/`, 'PROPFIND')).text()
+    const href = listing.match(/<href>([^<]+\.vcf)<\/href>/g)?.map((h) => h.slice(6, -7)) ?? []
+    const cards = await Promise.all(href.map(async (h) => (await dav(h)).text()))
+    if (!cards.some((c) => c.includes(`dav-${stamp}@example.org`))) throw new Error('карточки нет на CardDAV-сервере')
+    // Правка уходит на сервер.
+    await page.locator('.detail').getByRole('button', { name: 'Изменить' }).click()
+    await bform.getByLabel('Организация').fill('Радикале и партнёры')
+    await bform.getByRole('button', { name: 'Сохранить' }).click()
+    // Тост «Контакт сохранён» мог остаться от создания — ждём саму правку в карточке.
+    await page.locator('.detail .muted', { hasText: 'Радикале и партнёры' }).waitFor()
+    const after = await Promise.all(href.map(async (h) => (await dav(h)).text()))
+    if (!after.some((c) => c.includes('ORG:Радикале и партнёры'))) {
+      const fresh = await (await dav(`/${USER1}/contacts/`, 'PROPFIND')).text()
+      const hs = fresh.match(/<href>([^<]+\.vcf)<\/href>/g)?.map((h) => h.slice(6, -7)) ?? []
+      const all = await Promise.all(hs.map(async (h) => (await dav(h)).text()))
+      if (!all.some((c) => c.includes('ORG:Радикале и партнёры'))) throw new Error('правка не дошла до сервера')
+    }
+    await shot('22-carddav-book')
+    page.once('dialog', (d) => d.accept())
+    await page.locator('.detail').getByRole('button', { name: 'Удалить' }).click()
+    await page.locator('.item', { hasText: `Дав Карточкин ${stamp}` }).waitFor({ state: 'detached' })
+    const left = await (await dav(`/${USER1}/contacts/`, 'PROPFIND')).text()
+    const leftCards = await Promise.all((left.match(/<href>([^<]+\.vcf)<\/href>/g) ?? []).map(async (h) => (await dav(h.slice(6, -7))).text()))
+    if (leftCards.some((c) => c.includes(`dav-${stamp}@example.org`))) throw new Error('карточка осталась на сервере')
+    step('CardDAV: контакт создан, изменён и удалён во внешней книге')
+
+    // Своя учётка: неверный пароль, затем подключение и отключение.
+    await page.locator('[data-test=books-add]').click()
+    const af = page.locator('[data-test=books-form]')
+    await af.locator('[data-test=books-url]').fill('http://127.0.0.1:5232/')
+    await af.locator('[data-test=books-user]').fill(USER1)
+    await af.locator('[data-test=books-password]').fill('wrong')
+    await af.getByLabel('Название').fill(`Своя ${stamp}`)
+    expectHttpError = true
+    await af.getByRole('button', { name: 'Подключить' }).click()
+    await af.getByText('Сервер не принял логин или пароль.').waitFor()
+    expectHttpError = false
+    await af.locator('[data-test=books-password]').fill(PASS)
+    await af.getByRole('button', { name: 'Подключить' }).click()
+    await page.getByText('Адресная книга подключена').waitFor()
+    const acct = page.locator('.acct', { hasText: `Своя ${stamp}` })
+    await acct.waitFor()
+    await shot('23-carddav-account')
+    page.once('dialog', (d) => d.accept())
+    await acct.hover()
+    await acct.getByRole('button', { name: `Отключить Своя ${stamp}` }).click()
+    await acct.waitFor({ state: 'detached' })
+    step('CardDAV: своя учётка — ошибка пароля, подключение, отключение')
+    await page.getByRole('button', { name: 'Почта' }).first().click()
+  }
 
   // Папки: создать, подпапка, переименовать с подпапкой, отписка в настройках, удалить.
   const fname = `e2e папка ${stamp}`

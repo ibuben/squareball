@@ -54,3 +54,19 @@ smtp:
 #   engine: hunspell
 #   hunspell:
 #     dictionaries: [ru_RU, en_US]
+
+# Внешние адресные книги CardDAV (Nextcloud, SOGo, Radicale, Baïkal, iCloud).
+# Контакты кэшируются в БД и правятся в обе стороны; группы — локальные.
+# adapters:
+#   carddav:
+#     enabled: true
+#     allow_user_accounts: true       # пользователь подключает свои серверы (пароль хранится зашифрованным)
+#     allow_private_networks: false   # пользовательские учётки не ходят во внутренние сети
+#     presets:                        # книги для всех ящиков (пароль ящика не хранится)
+#       - id: cloud
+#         name: Контакты
+#         url: https://cloud.example.com/remote.php/dav/addressbooks/users/%u/
+#         username: "%u"              # %u — ящик, %l — имя до @, %d — домен
+#         password: session           # или password_file: /etc/webmail/carddav.pass
+#         readonly: false
+#         domains: []                 # пусто — все домены

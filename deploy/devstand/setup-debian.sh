@@ -150,4 +150,37 @@ fi
 
 postfix check
 systemctl restart postfix
-echo "devstand ready: IMAP 127.0.0.1:143/993, submission 127.0.0.1:587, ManageSieve 127.0.0.1:4190"
+# --- Hunspell (spellcheck.engine: hunspell) ------------------------------------
+apt-get install -y -qq hunspell hunspell-ru hunspell-en-us hunspell-uz >/dev/null
+
+# --- Radicale: CardDAV для адаптера carddav (только 127.0.0.1) -------------------
+apt-get install -y -qq radicale apache2-utils >/dev/null
+: > /etc/radicale/users
+for u in $USERS; do htpasswd -5 -b /etc/radicale/users "$u" "$PASS"; done
+chown radicale: /etc/radicale/users && chmod 640 /etc/radicale/users
+cat > /etc/radicale/config <<'RADICALE'
+[server]
+hosts = 127.0.0.1:5232
+[auth]
+type = htpasswd
+htpasswd_filename = /etc/radicale/users
+htpasswd_encryption = sha512
+[storage]
+filesystem_folder = /var/lib/radicale/collections
+[rights]
+type = owner_only
+RADICALE
+chown -R radicale: /var/lib/radicale
+systemctl enable radicale && systemctl restart radicale
+sleep 2
+# Книга alice с одной карточкой (TestIntegrationContactBooks) и пустая книга bob (e2e).
+mkbook() {
+  curl -s -u "$1:$PASS" -X MKCOL "http://127.0.0.1:5232/$1/contacts/" -H 'Content-Type: application/xml' -o /dev/null --data \
+    "<?xml version=\"1.0\"?><mkcol xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:carddav\"><set><prop><resourcetype><collection/><C:addressbook/></resourcetype><displayname>$2</displayname></prop></set></mkcol>"
+}
+mkbook alice "Рабочие"
+mkbook bob "Контакты Боба"
+printf 'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:seed-1\r\nFN:Карина Радикале\r\nN:Радикале;Карина;;;\r\nEMAIL;TYPE=WORK:karina@example.org\r\nTEL;TYPE=CELL:+998901112233\r\nADR;TYPE=WORK:;;ул. Навои 1;Ташкент;;;Узбекистан\r\nEND:VCARD\r\n' |
+  curl -s -u "alice:$PASS" -X PUT http://127.0.0.1:5232/alice/contacts/seed-1.vcf -H 'Content-Type: text/vcard' --data-binary @- -o /dev/null
+
+echo "devstand ready: IMAP 127.0.0.1:143/993, submission 127.0.0.1:587, ManageSieve 127.0.0.1:4190, CardDAV 127.0.0.1:5232"

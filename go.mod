@@ -8,6 +8,7 @@ require (
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/emersion/go-smtp v0.26.0
 	github.com/emersion/go-vcard v0.1.0
+	github.com/emersion/go-webdav v0.6.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0

@@ -34,7 +34,11 @@ func (s *Server) contactRoutes() {
 func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	group, _ := strconv.ParseInt(q.Get("group"), 10, 64)
-	list, total, err := s.store.Contacts(r.Context(), sessionFrom(r.Context()).Mailbox, q.Get("q"), group,
+	book := int64(-1) // все книги
+	if v := q.Get("book"); v != "" {
+		book, _ = strconv.ParseInt(v, 10, 64)
+	}
+	list, total, err := s.store.ContactsIn(r.Context(), sessionFrom(r.Context()).Mailbox, q.Get("q"), group, book,
 		intParam(r, "limit", 100, 500), intParam(r, "offset", 0, 0))
 	if err != nil {
 		s.storeError(w, err)
@@ -76,7 +80,28 @@ func (s *Server) handleSaveContact(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "contact.invalid", msg)
 		return
 	}
-	saved, err := s.store.SaveContact(r.Context(), sessionFrom(r.Context()).Mailbox, in)
+	mailbox := sessionFrom(r.Context()).Mailbox
+	// Книга контакта: у нового — из запроса, у существующего — из БД
+	// (перенос между книгами не поддерживается).
+	meta := store.RemoteMeta{Book: in.Book}
+	if in.ID != 0 {
+		var err error
+		if meta, err = s.store.ContactRemote(r.Context(), mailbox, in.ID); err != nil {
+			s.storeError(w, err)
+			return
+		}
+	}
+	if meta.Book > 0 {
+		saved, err := s.saveRemoteContact(r, in, meta)
+		if err != nil {
+			s.remoteError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+	in.Book = 0
+	saved, err := s.store.SaveContact(r.Context(), mailbox, in)
 	if err != nil {
 		s.storeError(w, err)
 		return
@@ -92,12 +117,38 @@ func (s *Server) handleDeleteContacts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid", "")
 		return
 	}
-	n, err := s.store.DeleteContacts(r.Context(), sessionFrom(r.Context()).Mailbox, in.IDs)
+	mailbox := sessionFrom(r.Context()).Mailbox
+	// Карточки внешних книг сначала удаляются на сервере; не удалённые там
+	// (книга только для чтения, карточку изменили) остаются и в кэше.
+	ids := in.IDs[:0]
+	var remoteErr error
+	for _, id := range in.IDs {
+		meta, err := s.store.ContactRemote(r.Context(), mailbox, id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			s.storeError(w, err)
+			return
+		}
+		if meta.Book > 0 {
+			if err := s.deleteRemoteContact(r, meta); err != nil {
+				remoteErr = err
+				continue
+			}
+		}
+		ids = append(ids, id)
+	}
+	n, err := s.store.DeleteContacts(r.Context(), mailbox, ids)
 	if err != nil {
 		s.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"deleted": n})
+	if remoteErr != nil && n == 0 {
+		s.remoteError(w, remoteErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n, "failed": len(in.IDs) - n})
 }
 
 func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {

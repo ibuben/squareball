@@ -131,3 +131,55 @@ func TestSpellWords(t *testing.T) {
 		t.Fatalf("after delete: %v %v", a, b)
 	}
 }
+
+func TestAddressBooks(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	a, err := s.AddDavAccount(ctx, "a@x", DavAccount{Name: "Cloud", URL: "https://c/", Secret: []byte{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAccountBooks(ctx, "a@x", a.ID, []RemoteBookInfo{{URL: "https://c/1/", Name: "Один"}, {URL: "https://c/2/", Name: "Два", ReadOnly: true}}); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := s.Books(ctx, "a@x")
+	if len(books) != 2 || books[0].Name != "Два" || !books[0].ReadOnly {
+		t.Fatalf("books: %+v", books)
+	}
+	b1 := books[1].ID
+	s.UpsertCard(ctx, "a@x", b1, "/1/x.vcf", "e1", []byte("v1"), Contact{Name: "Икс", Emails: []Labeled{{Value: "X@Y.test"}}})
+	g, _ := s.SaveGroup(ctx, "a@x", Group{Name: "Г"})
+	list, _, _ := s.ContactsIn(ctx, "a@x", "", 0, b1, 10, 0)
+	c := list[0]
+	c.Groups = []int64{g.ID}
+	s.SaveContact(ctx, "a@x", c)
+	// Обновление с сервера сохраняет id и группы.
+	s.UpsertCard(ctx, "a@x", b1, "/1/x.vcf", "e2", []byte("v2"), Contact{Name: "Икс 2", Emails: []Labeled{{Value: "x@y.test"}}})
+	got, _ := s.Contact(ctx, "a@x", c.ID)
+	if got.Name != "Икс 2" || got.Book != b1 || len(got.Groups) != 1 {
+		t.Fatalf("upsert: %+v", got)
+	}
+	if refs, _ := s.BookCards(ctx, b1); refs["/1/x.vcf"].ETag != "e2" {
+		t.Fatalf("cards: %v", refs)
+	}
+	if _, n, _ := s.ContactsIn(ctx, "a@x", "", 0, 0, 10, 0); n != 0 {
+		t.Fatalf("personal book must be empty: %d", n)
+	}
+	// Книга пропала на сервере — уходит с карточками.
+	s.SetAccountBooks(ctx, "a@x", a.ID, []RemoteBookInfo{{URL: "https://c/2/", Name: "Два"}})
+	if _, n, _ := s.Contacts(ctx, "a@x", "", 0, 10, 0); n != 0 {
+		t.Fatalf("cards of removed book remain: %d", n)
+	}
+	s.SetAccountBooks(ctx, "a@x", a.ID, []RemoteBookInfo{{URL: "https://c/1/", Name: "Один"}})
+	books, _ = s.Books(ctx, "a@x")
+	s.UpsertCard(ctx, "a@x", books[0].ID, "/1/y.vcf", "e", nil, Contact{Name: "Игрек"})
+	if err := s.DeleteDavAccount(ctx, "a@x", a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Books(ctx, "a@x"); len(b) != 0 {
+		t.Fatalf("books after account delete: %v", b)
+	}
+	if _, n, _ := s.Contacts(ctx, "a@x", "", 0, 10, 0); n != 0 {
+		t.Fatalf("cards after account delete: %d", n)
+	}
+}

@@ -65,6 +65,7 @@ type Labeled struct {
 
 type Contact struct {
 	ID      int64     `json:"id"`
+	Book    int64     `json:"book"` // 0 — личная книга, иначе внешняя (address_books.id)
 	Name    string    `json:"name"` // отображаемое имя
 	First   string    `json:"first_name"`
 	Last    string    `json:"last_name"`
@@ -102,12 +103,12 @@ func (c *Contact) searchText() string {
 	return strings.ToLower(strings.Join(parts, " "))
 }
 
-const contactCols = `id, name, first_name, last_name, org, title, notes, emails, phones, updated_at`
+const contactCols = `id, book_id, name, first_name, last_name, org, title, notes, emails, phones, updated_at`
 
 func scanContact(sc interface{ Scan(...any) error }) (Contact, error) {
 	var c Contact
 	var emails, phones, updated string
-	if err := sc.Scan(&c.ID, &c.Name, &c.First, &c.Last, &c.Org, &c.Title, &c.Notes, &emails, &phones, &updated); err != nil {
+	if err := sc.Scan(&c.ID, &c.Book, &c.Name, &c.First, &c.Last, &c.Org, &c.Title, &c.Notes, &emails, &phones, &updated); err != nil {
 		return c, err
 	}
 	_ = json.Unmarshal([]byte(emails), &c.Emails)
@@ -129,10 +130,19 @@ func likePattern(q string) string {
 	return "%" + q + "%"
 }
 
-// Contacts — страница контактов с поиском и фильтром по группе (0 — все).
+// Contacts — страница контактов всех книг с поиском и фильтром по группе (0 — все).
 func (s *Store) Contacts(ctx context.Context, mailbox, q string, group int64, limit, offset int) ([]Contact, int, error) {
+	return s.ContactsIn(ctx, mailbox, q, group, -1, limit, offset)
+}
+
+// ContactsIn — то же для одной книги: book 0 — личная, -1 — все.
+func (s *Store) ContactsIn(ctx context.Context, mailbox, q string, group, book int64, limit, offset int) ([]Contact, int, error) {
 	where := `c.mailbox = ?`
 	args := []any{mailbox}
+	if book >= 0 {
+		where += ` AND c.book_id = ?`
+		args = append(args, book)
+	}
 	if strings.TrimSpace(q) != "" {
 		where += ` AND c.search LIKE ? ESCAPE '\'`
 		args = append(args, likePattern(q))
@@ -205,6 +215,9 @@ func (s *Store) Contact(ctx context.Context, mailbox string, id int64) (Contact,
 	return list[0], err
 }
 
+// Normalize приводит поля контакта к виду, в котором он хранится.
+func Normalize(c *Contact) { normalize(c) }
+
 func normalize(c *Contact) {
 	clean := func(in []Labeled, lower bool) []Labeled {
 		out := []Labeled{}
@@ -247,8 +260,8 @@ func (s *Store) SaveContact(ctx context.Context, mailbox string, c Contact) (Con
 		if n >= MaxContacts {
 			return c, ErrTooMany
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO contacts(mailbox, name, first_name, last_name, org, title, notes, emails, phones, search)
-			VALUES (?,?,?,?,?,?,?,?,?,?)`, mailbox, c.Name, c.First, c.Last, c.Org, c.Title, c.Notes, string(emails), string(phones), c.searchText())
+		res, err := tx.ExecContext(ctx, `INSERT INTO contacts(mailbox, book_id, name, first_name, last_name, org, title, notes, emails, phones, search)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)`, mailbox, c.Book, c.Name, c.First, c.Last, c.Org, c.Title, c.Notes, string(emails), string(phones), c.searchText())
 		if err != nil {
 			return c, err
 		}
@@ -322,7 +335,7 @@ func (s *Store) ImportContacts(ctx context.Context, mailbox string, list []Conta
 			skipped++
 			continue
 		}
-		c.ID, c.Groups = 0, nil
+		c.ID, c.Groups, c.Book = 0, nil, 0
 		if _, err := s.SaveContact(ctx, mailbox, c); err != nil {
 			return added, skipped, err
 		}
