@@ -1,0 +1,22 @@
+# Конфиг для локального стенда (deploy/devstand/setup-debian.sh).
+version: 1
+server:
+  listen: "127.0.0.1:8080"
+  public_url: http://127.0.0.1:8080
+session:
+  secret_file: ./deploy/devstand/session.key
+imap:
+  host: 127.0.0.1
+  port: 993
+  security: tls
+  tls_verify: false        # самоподписанный сертификат стенда
+smtp:
+  host: 127.0.0.1
+  port: 587
+  security: starttls
+  tls_verify: false
+login:
+  default_domain: test.local
+log:
+  format: text
+  level: debug

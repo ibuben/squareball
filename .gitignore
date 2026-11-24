@@ -1,0 +1,5 @@
+/bin/
+/web/node_modules/
+/web/e2e/out/
+/internal/web/dist/*
+!/internal/web/dist/.gitkeep

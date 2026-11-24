@@ -1,0 +1,594 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+
+	"github.com/ibuben/squareball/ext"
+	"github.com/ibuben/squareball/internal/mail"
+	"github.com/ibuben/squareball/internal/sanitize"
+)
+
+func (s *Server) routes(static http.Handler) {
+	m := s.mux
+	m.HandleFunc("GET /api/v1/config", s.handleConfig)
+	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
+	m.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	m.HandleFunc("POST /api/v1/auth/logout", s.authed(s.handleLogout))
+	m.HandleFunc("GET /api/v1/auth/me", s.authed(s.handleMe))
+	m.HandleFunc("GET /api/v1/folders", s.authed(s.handleFolders))
+	m.HandleFunc("GET /api/v1/messages", s.authed(s.handleList))
+	m.HandleFunc("GET /api/v1/message", s.authed(s.handleMessage))
+	m.HandleFunc("GET /api/v1/part", s.authed(s.handlePart))
+	m.HandleFunc("GET /api/v1/raw", s.authed(s.handleRaw))
+	m.HandleFunc("POST /api/v1/messages/flags", s.authed(s.handleFlags))
+	m.HandleFunc("POST /api/v1/messages/move", s.authed(s.handleMove))
+	m.HandleFunc("POST /api/v1/messages/delete", s.authed(s.handleDelete))
+	m.HandleFunc("POST /api/v1/send", s.authed(s.handleSend))
+	m.HandleFunc("POST /api/v1/account/password", s.authed(s.handlePassword))
+	if static != nil {
+		m.Handle("/", static)
+	}
+}
+
+func (s *Server) brandFor(r *http.Request) ext.Brand {
+	s.mu.RLock()
+	bp := s.brand
+	s.mu.RUnlock()
+	if bp != nil {
+		if b, err := bp.Brand(r.Context(), r.Host); err == nil {
+			return b
+		}
+	}
+	ub := s.cfg.UI.Brand
+	return ext.Brand{Name: ub.Name, LogoURL: ub.LogoURL, CSSVars: ub.CSSVars}
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"brand":            s.brandFor(r),
+		"theme":            s.cfg.UI.Theme,
+		"default_language": s.cfg.UI.DefaultLanguage,
+		"languages":        s.cfg.UI.Languages,
+		"default_domain":   s.cfg.Login.DefaultDomain,
+	})
+}
+
+// --- вход и выход ------------------------------------------------------------
+
+func (s *Server) loginName(input string) (string, error) {
+	u := strings.TrimSpace(strings.ToLower(input))
+	if u == "" {
+		return "", errors.New("empty")
+	}
+	if !strings.Contains(u, "@") && s.cfg.Login.DefaultDomain != "" {
+		u += "@" + strings.ToLower(s.cfg.Login.DefaultDomain)
+	}
+	local, domain, _ := strings.Cut(u, "@")
+	if len(s.cfg.Login.AllowedDomains) > 0 {
+		ok := false
+		for _, d := range s.cfg.Login.AllowedDomains {
+			if strings.EqualFold(d, domain) {
+				ok = true
+			}
+		}
+		if !ok {
+			return "", errors.New("domain not allowed")
+		}
+	}
+	r := strings.NewReplacer("%u", u, "%l", local, "%d", domain)
+	return r.Replace(s.cfg.Login.UsernameFormat), nil
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := readJSON(r, &in); err != nil || in.Password == "" {
+		writeErr(w, http.StatusBadRequest, "auth.invalid", "")
+		return
+	}
+	ip := s.ClientIP(r)
+	if !s.sameOrigin(r) {
+		writeErr(w, http.StatusForbidden, "csrf", "")
+		return
+	}
+	user, err := s.loginName(in.Username)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "auth.failed", "")
+		return
+	}
+	if !s.loginIP.Allow(ip) || !s.loginUser.Allow(user) {
+		s.audit.Warn("login rate limited", "mailbox", user, "ip", ip)
+		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
+		return
+	}
+	c, err := mail.DialIMAP(&s.cfg.IMAP, mail.Creds{Username: user, Password: in.Password})
+	if err != nil {
+		if errors.Is(err, mail.ErrAuth) {
+			s.audit.Info("login failed", "mailbox", user, "ip", ip)
+			writeErr(w, http.StatusUnauthorized, "auth.failed", "")
+		} else {
+			s.log.Error("imap unavailable at login", "err", err)
+			writeErr(w, http.StatusBadGateway, "mail.unavailable", "")
+		}
+		return
+	}
+	s.loginUser.Reset(user)
+	sess, cookie, err := s.sessions.Create(user, in.Password, ext.AuthPassword, "password", ip, r.UserAgent())
+	if err != nil {
+		c.Close()
+		writeErr(w, http.StatusInternalServerError, "internal", "")
+		return
+	}
+	s.pool.Adopt(sess.ID, c)
+	s.setCookie(w, cookie)
+	s.audit.Info("login", "mailbox", user, "source", "password", "ip", ip)
+	writeJSON(w, http.StatusOK, s.meBody(r, sess.Mailbox, sess.CSRF))
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	s.sessions.Delete(sess.ID)
+	s.clearCookie(w)
+	s.audit.Info("logout", "mailbox", sess.Mailbox, "ip", s.ClientIP(r))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) meBody(r *http.Request, mailbox, csrf string) map[string]any {
+	s.mu.RLock()
+	pw := s.pwChanger != nil && s.pwName == s.cfg.Password.Driver
+	s.mu.RUnlock()
+	return map[string]any{
+		"mailbox": mailbox,
+		"csrf":    csrf,
+		"brand":   s.brandFor(r),
+		"features": map[string]bool{
+			"password_change": pw,
+			"sieve":           s.cfg.Sieve.Enabled,
+		},
+		"limits": map[string]int64{
+			"max_upload":     int64(s.cfg.UI.Attachments.MaxUpload),
+			"max_recipients": int64(s.cfg.SMTP.RateLimit.MaxRecipients),
+		},
+		"remote_images": s.cfg.UI.Attachments.RemoteImages,
+	}
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	writeJSON(w, http.StatusOK, s.meBody(r, sess.Mailbox, sess.CSRF))
+}
+
+// --- папки и письма ------------------------------------------------------------
+
+func (s *Server) folders(c *imapclient.Client) ([]mail.Folder, error) {
+	return mail.ListFolders(c, s.cfg.IMAP.Folders.Detect, s.cfg.IMAP.Folders.Fallback)
+}
+
+func (s *Server) handleFolders(w http.ResponseWriter, r *http.Request) {
+	var out []mail.Folder
+	if s.withIMAP(w, r, func(c *imapclient.Client) (err error) {
+		out, err = s.folders(c)
+		return err
+	}) {
+		writeJSON(w, http.StatusOK, map[string]any{"folders": out})
+	}
+}
+
+func intParam(r *http.Request, key string, def, max int) int {
+	v, err := strconv.Atoi(r.URL.Query().Get(key))
+	if err != nil || v < 0 {
+		return def
+	}
+	if max > 0 && v > max {
+		return max
+	}
+	return v
+}
+
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	q := mail.ListQuery{
+		Folder: r.URL.Query().Get("folder"),
+		Offset: intParam(r, "offset", 0, 0),
+		Limit:  intParam(r, "limit", 50, 200),
+		Text:   r.URL.Query().Get("q"),
+		Filter: r.URL.Query().Get("filter"),
+	}
+	if q.Folder == "" {
+		q.Folder = "INBOX"
+	}
+	var page *mail.Page
+	if s.withIMAP(w, r, func(c *imapclient.Client) (err error) {
+		page, err = mail.ListMessages(c, q)
+		return err
+	}) {
+		writeJSON(w, http.StatusOK, page)
+	}
+}
+
+func uidParam(r *http.Request) (string, uint32, bool) {
+	folder := r.URL.Query().Get("folder")
+	uid, err := strconv.ParseUint(r.URL.Query().Get("uid"), 10, 32)
+	return folder, uint32(uid), folder != "" && err == nil && uid > 0
+}
+
+func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
+	folder, uid, ok := uidParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return
+	}
+	var m *mail.Message
+	if !s.withIMAP(w, r, func(c *imapclient.Client) (err error) {
+		m, err = mail.GetMessage(c, folder, uid, r.URL.Query().Get("peek") != "1")
+		return err
+	}) {
+		return
+	}
+	allowRemote := s.cfg.UI.Attachments.RemoteImages == "always" ||
+		(s.cfg.UI.Attachments.RemoteImages == "ask" && r.URL.Query().Get("images") == "1")
+	cids := map[string]int{}
+	for _, a := range m.Attachments {
+		if a.ContentID != "" {
+			cids[a.ContentID] = a.Index
+		}
+	}
+	partURL := func(cid string) string {
+		i, ok := cids[cid]
+		if !ok {
+			return ""
+		}
+		return fmt.Sprintf("/api/v1/part?folder=%s&uid=%d&index=%d", url.QueryEscape(folder), uid, i)
+	}
+	var body sanitize.Result
+	if m.HTML != "" {
+		body = sanitize.Email(m.HTML, partURL, allowRemote)
+	} else {
+		body = sanitize.Result{HTML: sanitize.Text(m.Text)}
+	}
+	text := m.Text
+	if text == "" && m.HTML != "" {
+		text = mail.HTMLToText(m.HTML)
+	}
+	m.HTML, m.Text = "", ""
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":        m,
+		"body_html":      body.HTML,
+		"body_text":      text, // для цитирования при ответе
+		"blocked_images": body.BlockedImages,
+	})
+}
+
+func (s *Server) handlePart(w http.ResponseWriter, r *http.Request) {
+	folder, uid, ok := uidParam(r)
+	index, err := strconv.Atoi(r.URL.Query().Get("index"))
+	if !ok || err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return
+	}
+	var att *mail.Attachment
+	var data []byte
+	if !s.withIMAP(w, r, func(c *imapclient.Client) (err error) {
+		att, data, err = mail.GetPart(c, folder, uid, index)
+		return err
+	}) {
+		return
+	}
+	ct := att.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	// Встраиваем только картинки; всё остальное — только скачиванием,
+	// чтобы HTML/SVG из вложения не исполнялся на нашем origin.
+	disp := "attachment"
+	if r.URL.Query().Get("download") != "1" && strings.HasPrefix(ct, "image/") && ct != "image/svg+xml" {
+		disp = "inline"
+	} else if disp == "attachment" {
+		ct = safeDownloadType(ct)
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(disp, map[string]string{"filename": att.Filename}))
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Write(data)
+}
+
+func safeDownloadType(ct string) string {
+	if strings.HasPrefix(ct, "text/html") || strings.Contains(ct, "xml") || strings.Contains(ct, "javascript") {
+		return "application/octet-stream"
+	}
+	return ct
+}
+
+func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
+	folder, uid, ok := uidParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return
+	}
+	var raw []byte
+	if s.withIMAP(w, r, func(c *imapclient.Client) (err error) {
+		raw, err = mail.GetRaw(c, folder, uid)
+		return err
+	}) {
+		w.Header().Set("Content-Type", "message/rfc822")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fmt.Sprintf("message-%d.eml", uid)}))
+		w.Write(raw)
+	}
+}
+
+type batchReq struct {
+	Folder string   `json:"folder"`
+	UIDs   []uint32 `json:"uids"`
+	Flags  []string `json:"flags,omitempty"`
+	Add    bool     `json:"add,omitempty"`
+	Dest   string   `json:"dest,omitempty"`
+}
+
+var allowedFlags = map[string]bool{
+	string(imap.FlagSeen): true, string(imap.FlagFlagged): true, string(imap.FlagAnswered): true,
+	string(imap.FlagForwarded): true, string(imap.FlagJunk): true, string(imap.FlagNotJunk): true,
+}
+
+func (s *Server) readBatch(w http.ResponseWriter, r *http.Request) (*batchReq, bool) {
+	var in batchReq
+	if err := readJSON(r, &in); err != nil || in.Folder == "" || len(in.UIDs) == 0 || len(in.UIDs) > 5000 {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return nil, false
+	}
+	return &in, true
+}
+
+func (s *Server) handleFlags(w http.ResponseWriter, r *http.Request) {
+	in, ok := s.readBatch(w, r)
+	if !ok {
+		return
+	}
+	for _, f := range in.Flags {
+		if !allowedFlags[f] {
+			writeErr(w, http.StatusBadRequest, "invalid", "flag "+f)
+			return
+		}
+	}
+	if s.withIMAP(w, r, func(c *imapclient.Client) error {
+		return mail.SetFlags(c, in.Folder, in.UIDs, in.Flags, in.Add)
+	}) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
+	in, ok := s.readBatch(w, r)
+	if !ok || in.Dest == "" {
+		if ok {
+			writeErr(w, http.StatusBadRequest, "invalid", "")
+		}
+		return
+	}
+	if s.withIMAP(w, r, func(c *imapclient.Client) error {
+		if role, ok := strings.CutPrefix(in.Dest, "role:"); ok { // "role:archive" → имя папки
+			fs, err := s.folders(c)
+			if err != nil {
+				return err
+			}
+			if in.Dest = mail.FolderByRole(fs, role); in.Dest == "" {
+				return mail.ErrNotFound
+			}
+		}
+		return mail.Move(c, in.Folder, in.UIDs, in.Dest)
+	}) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleDelete: из обычной папки — в Корзину; из Корзины и Спама — навсегда.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	in, ok := s.readBatch(w, r)
+	if !ok {
+		return
+	}
+	permanent := false
+	if s.withIMAP(w, r, func(c *imapclient.Client) error {
+		fs, err := s.folders(c)
+		if err != nil {
+			return err
+		}
+		trash := mail.FolderByRole(fs, mail.RoleTrash)
+		if trash == "" || in.Folder == trash || in.Folder == mail.FolderByRole(fs, mail.RoleJunk) {
+			permanent = true
+			return mail.Expunge(c, in.Folder, in.UIDs)
+		}
+		return mail.Move(c, in.Folder, in.UIDs, trash)
+	}) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "permanent": permanent})
+	}
+}
+
+// --- отправка ------------------------------------------------------------------
+
+type sendReq struct {
+	To         []mail.Address `json:"to"`
+	Cc         []mail.Address `json:"cc"`
+	Bcc        []mail.Address `json:"bcc"`
+	Subject    string         `json:"subject"`
+	Text       string         `json:"text"`
+	HTML       string         `json:"html"`
+	InReplyTo  string         `json:"in_reply_to"`
+	References []string       `json:"references"`
+	// Исходное письмо: после отправки ему ставится \Answered или $Forwarded.
+	Source *struct {
+		Folder string `json:"folder"`
+		UID    uint32 `json:"uid"`
+		Mode   string `json:"mode"` // reply | forward
+	} `json:"source"`
+}
+
+func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	maxUpload := int64(s.cfg.UI.Attachments.MaxUpload)
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload+1<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
+		return
+	}
+	var in sendReq
+	if err := json.Unmarshal([]byte(r.FormValue("draft")), &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return
+	}
+	d := &mail.Draft{
+		From: mail.Address{Email: sess.Mailbox}, To: in.To, Cc: in.Cc, Bcc: in.Bcc,
+		Subject: in.Subject, Text: in.Text, HTML: sanitize.Email(in.HTML, func(string) string { return "" }, true).HTML,
+		InReplyTo: in.InReplyTo, References: in.References,
+	}
+	if in.HTML == "" {
+		d.HTML = ""
+	}
+	rcpts := d.Recipients()
+	if len(rcpts) == 0 {
+		writeErr(w, http.StatusBadRequest, "send.no_recipients", "")
+		return
+	}
+	if max := s.cfg.SMTP.RateLimit.MaxRecipients; max > 0 && len(rcpts) > max {
+		writeErr(w, http.StatusBadRequest, "send.too_many_recipients", strconv.Itoa(max))
+		return
+	}
+	if r.MultipartForm != nil {
+		var total int64
+		for _, fh := range r.MultipartForm.File["attachments"] {
+			total += fh.Size
+			if total > maxUpload {
+				writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
+				return
+			}
+			f, err := fh.Open()
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid", "")
+				return
+			}
+			data, _ := io.ReadAll(f)
+			f.Close()
+			ct := fh.Header.Get("Content-Type")
+			d.Attachments = append(d.Attachments, mail.Upload{Filename: fh.Filename, ContentType: ct, Data: data})
+		}
+	}
+	if !s.sendUser.Allow(sess.Mailbox) {
+		writeErr(w, http.StatusTooManyRequests, "send.rate_limited", "")
+		return
+	}
+	raw, _, err := mail.Build(d)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	if int64(len(raw)) > int64(s.cfg.SMTP.MaxMessageSize) {
+		writeErr(w, http.StatusRequestEntityTooLarge, "send.too_large", "")
+		return
+	}
+	cr := s.smtpCreds(sess)
+	if cr.Username == "" {
+		writeErr(w, http.StatusForbidden, "send.not_allowed", "")
+		return
+	}
+	if err := mail.Send(&s.cfg.SMTP, cr, sess.Mailbox, rcpts, raw); err != nil {
+		s.mailError(w, r, err)
+		return
+	}
+	s.audit.Info("message sent", "mailbox", sess.Mailbox, "recipients", len(rcpts), "size", len(raw), "ip", s.ClientIP(r))
+
+	// Копия в «Отправленные» и флаг исходному письму. Ошибки здесь не отменяют отправку.
+	warn := ""
+	_ = s.pool.With(sess.ID, s.creds(sess), func(c *imapclient.Client) error {
+		if s.cfg.SMTP.SaveSent {
+			fs, err := s.folders(c)
+			if err == nil {
+				if sent := mail.FolderByRole(fs, mail.RoleSent); sent != "" {
+					if err := mail.Append(c, sent, raw, imap.FlagSeen); err != nil {
+						warn = "sent_copy_failed"
+					}
+				}
+			}
+		}
+		if in.Source != nil && in.Source.UID > 0 {
+			flag := string(imap.FlagAnswered)
+			if in.Source.Mode == "forward" {
+				flag = string(imap.FlagForwarded)
+			}
+			_ = mail.SetFlags(c, in.Source.Folder, []uint32{in.Source.UID}, []string{flag}, true)
+		}
+		return nil
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": warn})
+}
+
+// --- смена пароля ------------------------------------------------------------------
+
+func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r.Context())
+	s.mu.RLock()
+	pc, name := s.pwChanger, s.pwName
+	s.mu.RUnlock()
+	if pc == nil || name != s.cfg.Password.Driver {
+		writeErr(w, http.StatusNotFound, "password.disabled", "")
+		return
+	}
+	var in struct {
+		Current string `json:"current"`
+		New     string `json:"new"`
+	}
+	if err := readJSON(r, &in); err != nil || in.New == "" {
+		writeErr(w, http.StatusBadRequest, "invalid", "")
+		return
+	}
+	if !s.loginUser.Allow("pw:" + sess.Mailbox) {
+		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
+		return
+	}
+	caps := pc.Capabilities()
+	if in.Current == "" {
+		writeErr(w, http.StatusBadRequest, "password.current_required", "")
+		return
+	}
+	if !caps.VerifiesCurrent {
+		c, err := mail.DialIMAP(&s.cfg.IMAP, mail.Creds{Username: sess.Mailbox, Password: in.Current})
+		if err != nil {
+			writeErr(w, http.StatusForbidden, "password.current", "")
+			return
+		}
+		c.Close()
+	}
+	err := pc.Change(r.Context(), ext.PasswordChange{
+		Mailbox: sess.Mailbox, Current: in.Current, New: in.New, RemoteIP: s.ClientIP(r),
+	})
+	switch {
+	case err == nil:
+		if sess.AuthMode == ext.AuthPassword {
+			_ = s.sessions.UpdatePassword(sess, in.New)
+		}
+		s.pool.Close(sess.ID) // следующий запрос переподключится с новым паролем
+		s.sessions.DeleteMailbox(sess.Mailbox, sess.ID)
+		s.audit.Info("password changed", "mailbox", sess.Mailbox, "ip", s.ClientIP(r))
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, ext.ErrWrongPassword):
+		writeErr(w, http.StatusForbidden, "password.current", "")
+	case errors.Is(err, ext.ErrWeakPassword):
+		writeErr(w, http.StatusBadRequest, "password.weak", "")
+	case errors.Is(err, ext.ErrRateLimited):
+		writeErr(w, http.StatusTooManyRequests, "auth.locked", "")
+	default:
+		s.log.Error("password change failed", "err", err, "mailbox", sess.Mailbox)
+		writeErr(w, http.StatusBadGateway, "password.unavailable", "")
+	}
+}
