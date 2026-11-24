@@ -46,3 +46,11 @@ smtp:
 #     name: "Почта"
 #     logo_url: /logo.svg
 #     css_vars: { "--accent": "#0b7a5c" }
+
+# Проверка орфографии в редакторе: browser (по умолчанию) — средствами браузера;
+# hunspell — на сервере (apt install hunspell hunspell-ru hunspell-en-us),
+# с выбором словаря и личным словарём пользователя; off — выключена.
+# spellcheck:
+#   engine: hunspell
+#   hunspell:
+#     dictionaries: [ru_RU, en_US]

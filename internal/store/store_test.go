@@ -110,3 +110,24 @@ func TestTemplatesAndPrefs(t *testing.T) {
 		t.Errorf("templates survive DeleteMailbox: %v", list)
 	}
 }
+
+func TestSpellWords(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	s.AddSpellWord(ctx, "a@x", "Webbeard")
+	s.AddSpellWord(ctx, "a@x", "Webbeard")
+	s.AddSpellWord(ctx, "a@x", "Ташкентский")
+	s.AddSpellWord(ctx, "b@x", "чужое")
+	if list, _ := s.SpellWords(ctx, "a@x"); len(list) != 2 || list[0] != "Webbeard" {
+		t.Fatalf("list: %v", list)
+	}
+	s.DeleteSpellWord(ctx, "a@x", "Webbeard")
+	if err := s.DeleteMailbox(ctx, "b@x"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.SpellWords(ctx, "a@x")
+	b, _ := s.SpellWords(ctx, "b@x")
+	if len(a) != 1 || len(b) != 0 {
+		t.Fatalf("after delete: %v %v", a, b)
+	}
+}

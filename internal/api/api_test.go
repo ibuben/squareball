@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -1033,4 +1034,64 @@ func TestIntegrationMbox(t *testing.T) {
 	if st, _ := c.do("GET", "/api/v1/folders/export?folder=NoSuchFolder", nil); st == 200 {
 		t.Error("export of missing folder must fail")
 	}
+}
+
+func TestIntegrationSpell(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	if _, err := exec.LookPath("hunspell"); err != nil {
+		t.Skip("hunspell not installed")
+	}
+	cfg := testConfig(t)
+	cfg.Spellcheck.Engine = "hunspell"
+	ts := httptest.NewServer(newServer(t, cfg).Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "alice", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+	sc := me["features"].(map[string]any)["spellcheck"].(map[string]any)
+	if sc["engine"] != "hunspell" || len(sc["dictionaries"].([]any)) != 2 {
+		t.Fatalf("feature: %v", sc)
+	}
+
+	check := func(dict string, words ...string) map[string]any {
+		t.Helper()
+		st, body := c.do("POST", "/api/v1/spell", map[string]any{"dictionary": dict, "words": words})
+		if st != 200 {
+			t.Fatalf("spell: %d %v", st, body)
+		}
+		return body["misspelled"].(map[string]any)
+	}
+	bad := check("", "Привет", "превет", "world", "wrld", "Сквербол")
+	if len(bad) != 3 || bad["превет"] == nil || bad["wrld"] == nil {
+		t.Fatalf("misspelled: %v", bad)
+	}
+	if st, body := c.do("POST", "/api/v1/spell", map[string]any{"dictionary": "de_DE", "words": []string{"x"}}); st != 400 || body["error"] != "spell.dictionary" {
+		t.Fatalf("unknown dictionary: %d %v", st, body)
+	}
+
+	// Личный словарь: слово перестаёт считаться ошибкой в любом регистре.
+	if st, body := c.do("POST", "/api/v1/spell/words", map[string]string{"word": "Сквербол"}); st != 200 || len(body["words"].([]any)) != 1 {
+		t.Fatalf("add word: %d %v", st, body)
+	}
+	if st, _ := c.do("POST", "/api/v1/spell/words", map[string]string{"word": "два слова"}); st != 400 {
+		t.Fatalf("bad word accepted: %d", st)
+	}
+	if bad := check("ru_RU", "сквербол", "Сквербол", "hello"); len(bad) != 1 || bad["hello"] == nil {
+		t.Fatalf("personal dictionary: %v", bad)
+	}
+	c.do("POST", "/api/v1/spell/words/delete", map[string]string{"word": "Сквербол"})
+
+	if st, body := c.do("PUT", "/api/v1/prefs", map[string]string{"spell": "en_US"}); st != 200 {
+		t.Fatalf("pref: %d %v", st, body)
+	}
+	if st, _ := c.do("PUT", "/api/v1/prefs", map[string]string{"spell": "de_DE"}); st != 400 {
+		t.Fatalf("pref accepts unknown dictionary: %d", st)
+	}
+	c.do("PUT", "/api/v1/prefs", map[string]string{"spell": ""})
 }

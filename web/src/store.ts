@@ -41,7 +41,7 @@ export const state = reactive({
   view: 'mail' as 'mail' | 'settings' | 'contacts',
   identities: [] as Identity[],
   identityLevel: 'single' as 'single' | 'domain' | 'any',
-  prefs: { archive_structure: '', mdn_mode: '', threads: '' } as Prefs,
+  prefs: { archive_structure: '', mdn_mode: '', threads: '', spell: '' } as Prefs,
   expanded: new Set<number>(), // развёрнутые цепочки (uid головы)
   templates: [] as Template[],
 })

@@ -6,7 +6,10 @@ export interface Me {
   mailbox: string
   csrf: string
   brand: Brand
-  features: { password_change: boolean; sieve: boolean }
+  features: {
+    password_change: boolean; sieve: boolean
+    spellcheck: { engine: 'browser' | 'hunspell' | 'off'; dictionaries: string[] }
+  }
   limits: { max_upload: number; max_recipients: number }
   remote_images: 'ask' | 'always' | 'never'
 }
@@ -57,7 +60,9 @@ export interface Collected { email: string; name: string; uses: number; last_use
 export interface Suggestion { kind: 'contact' | 'collected' | 'group'; name: string; email?: string; group_id?: number; members?: Collected[] }
 
 export interface Template { id: number; name: string; html: string }
-export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never'; threads: '' | 'on' }
+export interface Prefs { archive_structure: '' | 'year' | 'month'; mdn_mode: '' | 'always' | 'never'; threads: '' | 'on'
+  spell: string // '' — все словари, имя словаря или 'off'
+}
 
 export interface PasswordPolicy {
   min_length: number; max_length: number; require_classes: number
@@ -135,6 +140,11 @@ export const api = {
   archive: (folder: string, uids: number[]) =>
     request<{ ok: boolean; moved: number }>('POST', '/api/v1/messages/archive', { folder, uids }),
   prefs: () => request<{ prefs: Prefs }>('GET', '/api/v1/prefs'),
+  spell: (dictionary: string, words: string[]) =>
+    request<{ misspelled: Record<string, string[]> }>('POST', '/api/v1/spell', { dictionary, words }),
+  spellWords: () => request<{ words: string[] }>('GET', '/api/v1/spell/words'),
+  addSpellWord: (word: string) => request<{ words: string[] }>('POST', '/api/v1/spell/words', { word }),
+  deleteSpellWord: (word: string) => request<{ words: string[] }>('POST', '/api/v1/spell/words/delete', { word }),
   setPrefs: (p: Partial<Prefs>) => request<{ prefs: Prefs }>('PUT', '/api/v1/prefs', p),
   mdn: (folder: string, uid: number, send: boolean, auto = false) =>
     request<{ ok: boolean; sent: boolean }>('POST', '/api/v1/messages/mdn', { folder, uid, send, auto }),

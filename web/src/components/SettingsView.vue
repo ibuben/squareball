@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { BookOpen, FileText, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
+import {
+  BookOpen, FileText, Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, SpellCheck, UserRound,
+} from 'lucide-vue-next'
 import { applyTheme, loadPrefs, savePrefs, state } from '../store'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
@@ -8,11 +10,13 @@ import VacationSettings from './settings/VacationSettings.vue'
 import PasswordSettings from './settings/PasswordSettings.vue'
 import FoldersSettings from './settings/FoldersSettings.vue'
 import TemplatesSettings from './settings/TemplatesSettings.vue'
+import SpellSettings from './settings/SpellSettings.vue'
 
-type Section = 'identities' | 'templates' | 'reading' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
-const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean }[] = [
+type Section = 'identities' | 'templates' | 'spell' | 'reading' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
+const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean; spell?: boolean }[] = [
   { id: 'identities', label: 'Отправители и подписи', icon: UserRound },
   { id: 'templates', label: 'Шаблоны ответов', icon: FileText },
+  { id: 'spell', label: 'Орфография', icon: SpellCheck, spell: true },
   { id: 'reading', label: 'Чтение писем', icon: BookOpen },
   { id: 'folders', label: 'Папки', icon: FolderTree },
   { id: 'filters', label: 'Фильтры', icon: Filter, sieve: true },
@@ -40,13 +44,15 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
     <nav class="nav" aria-label="Настройки">
       <h1>Настройки</h1>
       <button v-for="s in sections" :key="s.id" class="item" :class="{ on: current === s.id }"
-              v-show="(!s.sieve || state.me?.features.sieve) && (!s.password || state.me?.features.password_change)" @click="open(s.id)">
+              v-show="(!s.sieve || state.me?.features.sieve) && (!s.password || state.me?.features.password_change)
+                && (!s.spell || state.me?.features.spellcheck?.engine !== 'off')" @click="open(s.id)">
         <component :is="s.icon" :size="16" /> {{ s.label }}
       </button>
     </nav>
     <div class="content scroll">
       <IdentitiesSettings v-if="current === 'identities'" />
       <TemplatesSettings v-else-if="current === 'templates'" />
+      <SpellSettings v-else-if="current === 'spell'" />
       <section v-else-if="current === 'reading'">
         <h2>Чтение писем</h2>
         <div class="card">

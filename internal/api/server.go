@@ -21,6 +21,7 @@ import (
 	"github.com/ibuben/squareball/internal/config"
 	"github.com/ibuben/squareball/internal/mail"
 	"github.com/ibuben/squareball/internal/session"
+	"github.com/ibuben/squareball/internal/spell"
 	"github.com/ibuben/squareball/internal/store"
 )
 
@@ -48,6 +49,9 @@ type Server struct {
 	masterPw  string
 
 	pwnedClient *http.Client // проверка пароля по базе утечек (password.policy.check_breached)
+
+	spellEngine string         // browser | hunspell | off (hunspell без словарей → browser)
+	spell       *spell.Checker // только при engine: hunspell
 }
 
 type Options struct {
@@ -94,6 +98,7 @@ func New(o Options) (*Server, error) {
 		}
 		s.masterPw = string(b)
 	}
+	s.initSpell()
 	s.routes(o.Static)
 	return s, nil
 }

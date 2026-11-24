@@ -20,6 +20,8 @@ var prefValues = map[string][]string{
 	"mdn_mode": {"", "always", "never"},
 	// Список писем цепочками.
 	"threads": {"", "on"},
+	// Проверка орфографии: "" — все словари, имя словаря или off (см. spellPrefOK).
+	"spell": nil,
 }
 
 func (s *Server) prefRoutes() {
@@ -68,7 +70,7 @@ func (s *Server) handlePutPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	for k, v := range in {
 		allowed, ok := prefValues[k]
-		valid := false
+		valid := k == "spell" && s.spellPrefOK(v)
 		for _, a := range allowed {
 			valid = valid || a == v
 		}

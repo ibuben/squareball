@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type Config struct {
 	Password   Password             `yaml:"password"`
 	Identities Identities           `yaml:"identities"`
 	UI         UI                   `yaml:"ui"`
+	Spellcheck Spellcheck           `yaml:"spellcheck"`
 	Log        Log                  `yaml:"log"`
 	Metrics    Metrics              `yaml:"metrics"`
 	Adapters   map[string]yaml.Node `yaml:"adapters"`
@@ -178,6 +180,18 @@ type UI struct {
 	} `yaml:"attachments"`
 }
 
+// Spellcheck — проверка орфографии в редакторе письма.
+// engine: browser — встроенная проверка браузера; hunspell — на сервере,
+// со словарями из списка и личным словарём пользователя; off — выключена.
+type Spellcheck struct {
+	Engine   string `yaml:"engine"`
+	Hunspell struct {
+		Command      string        `yaml:"command"`
+		Dictionaries []string      `yaml:"dictionaries"`
+		Timeout      time.Duration `yaml:"timeout"`
+	} `yaml:"hunspell"`
+}
+
 type Log struct {
 	Level     string `yaml:"level"`
 	Format    string `yaml:"format"`
@@ -238,6 +252,10 @@ func Defaults() *Config {
 	c.UI.Brand.Name = "Webmail"
 	c.UI.Attachments.MaxUpload = 25 << 20
 	c.UI.Attachments.RemoteImages = "ask"
+	c.Spellcheck.Engine = "browser"
+	c.Spellcheck.Hunspell.Command = "hunspell"
+	c.Spellcheck.Hunspell.Dictionaries = []string{"ru_RU", "en_US"}
+	c.Spellcheck.Hunspell.Timeout = 5 * time.Second
 	c.Log.Level = "info"
 	c.Log.Format = "json"
 	return c
@@ -268,6 +286,9 @@ func Load(path string) (*Config, error) {
 	}
 	return c, nil
 }
+
+// spellDict — имя словаря hunspell: ru_RU, en_US, de_DE_frami.
+var spellDict = regexp.MustCompile(`^[A-Za-z]{2,3}(_[A-Za-z0-9]{2,8})*$`)
 
 // Validate проверяет обязательные поля и допустимые значения.
 func (c *Config) Validate() error {
@@ -318,6 +339,26 @@ func (c *Config) Validate() error {
 	checkEndpoint("smtp", c.SMTP.Endpoint, "tls", "starttls", "none")
 	if c.Sieve.Enabled {
 		checkEndpoint("sieve", c.Sieve.Endpoint, "starttls", "none")
+	}
+	switch c.Spellcheck.Engine {
+	case "browser", "off":
+	case "hunspell":
+		if len(c.Spellcheck.Hunspell.Dictionaries) == 0 {
+			add("spellcheck.hunspell.dictionaries: at least one is required")
+		}
+		for _, d := range c.Spellcheck.Hunspell.Dictionaries {
+			if !spellDict.MatchString(d) {
+				add("spellcheck.hunspell.dictionaries: invalid name %q", d)
+			}
+		}
+		if c.Spellcheck.Hunspell.Command == "" {
+			add("spellcheck.hunspell.command: required")
+		}
+		if c.Spellcheck.Hunspell.Timeout <= 0 {
+			add("spellcheck.hunspell.timeout: must be positive")
+		}
+	default:
+		add("spellcheck.engine: must be browser, hunspell or off")
 	}
 	if !contains([]string{"session", "none"}, c.SMTP.Auth) {
 		add("smtp.auth: must be session or none")

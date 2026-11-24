@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import Image from '@tiptap/extension-image'
 import {
-  Bold, ImagePlus, Italic, Link as LinkIcon, List, ListOrdered, Quote, Redo2, RemoveFormatting, Strikethrough, Underline, Undo2,
+  Bold, Check, ImagePlus, Italic, Link as LinkIcon, List, ListOrdered, Quote, Redo2, RemoveFormatting, SpellCheck, Strikethrough,
+  Underline, Undo2,
 } from 'lucide-vue-next'
+import {
+  addToDictionary, dictionaryName, ignoreWord, refreshSpell, Spell, spellDictionaries, spellEngine, spellOn, type WordAt,
+} from '../spell'
+import { api } from '../api'
+import { reportError, state } from '../store'
 
 // Редактор текста письма. Цитата исходного письма в него не попадает:
 // схема TipTap выбросила бы таблицы и стили рассылок (см. ComposeWindow).
@@ -80,9 +86,11 @@ const editor = useEditor({
     }),
     Placeholder.configure({ placeholder: props.placeholder ?? '' }),
     Image.configure({ allowBase64: true, HTMLAttributes: { style: 'max-width:100%;height:auto' } }),
+    Spell.configure({ onMenu: openSpellMenu }),
   ],
   editorProps: {
-    attributes: { class: 'rich', spellcheck: 'true' },
+    // Браузерная проверка — только при engine=browser, иначе подчёркивания задвоятся.
+    attributes: () => ({ class: 'rich', spellcheck: spellEngine() === 'browser' && spellOn() ? 'true' : 'false' }),
     // Файлы, брошенные или вставленные в текст, становятся вложениями.
     handleDrop: (view, event) => {
       const ev = event as DragEvent
@@ -98,7 +106,60 @@ const editor = useEditor({
   onUpdate: () => emit('change'),
 })
 
-onBeforeUnmount(() => editor.value?.destroy())
+onBeforeUnmount(() => {
+  editor.value?.destroy()
+  document.removeEventListener('mousedown', onDocDown)
+})
+
+// --- орфография: меню исправлений и выбор словаря --------------------------------
+const spellMenu = ref<{ x: number; y: number; w: WordAt & { suggestions: string[] } } | null>(null)
+const spellMenuEl = ref<HTMLElement>()
+async function openSpellMenu(e: MouseEvent, w: WordAt & { suggestions: string[] }) {
+  langMenu.value = false
+  spellMenu.value = { x: e.clientX, y: e.clientY, w }
+  await nextTick()
+  const el = spellMenuEl.value
+  if (!el || !spellMenu.value) return
+  const r = el.getBoundingClientRect()
+  if (r.right > innerWidth) spellMenu.value.x = Math.max(4, innerWidth - r.width - 4)
+  if (r.bottom > innerHeight) spellMenu.value.y = Math.max(4, innerHeight - r.height - 4)
+  el.querySelector('button')?.focus()
+}
+function closeMenus() { spellMenu.value = null; langMenu.value = false }
+function onDocDown(e: Event) {
+  const t = e.target as Node
+  if (spellMenuEl.value?.contains(t) || langEl.value?.contains(t)) return
+  closeMenus()
+}
+document.addEventListener('mousedown', onDocDown)
+
+function replaceWord(s: string) {
+  const m = spellMenu.value
+  const e = editor.value
+  closeMenus()
+  if (!m || !e) return
+  // Слово могло измениться, пока было открыто меню.
+  if (e.state.doc.textBetween(m.w.from, m.w.to) !== m.w.word) return
+  e.chain().focus().command(({ tr }) => { tr.insertText(s, m.w.from, m.w.to); return true }).run()
+}
+function spellAction(fn: (w: string) => unknown) {
+  const m = spellMenu.value
+  closeMenus()
+  if (m) void fn(m.w.word)
+  editor.value?.commands.focus()
+}
+
+const langMenu = ref(false)
+const langEl = ref<HTMLElement>()
+const engine = spellEngine()
+async function setSpell(v: string) {
+  closeMenus()
+  const prev = state.prefs.spell
+  state.prefs.spell = v
+  refreshSpell()
+  if (spellEngine() === 'browser') editor.value?.view.dispatch(editor.value.state.tr) // обновить атрибут spellcheck
+  try { state.prefs = (await api.setPrefs({ spell: v })).prefs } catch (err) { state.prefs.spell = prev; refreshSpell(); reportError(err) }
+}
 
 function setLink() {
   const e = editor.value
@@ -146,6 +207,41 @@ defineExpose({
             @mousedown.prevent @click="b.run">
       <component :is="b.icon" :size="15" />
     </button>
+    <div v-if="engine !== 'off'" ref="langEl" class="lang">
+      <button type="button" class="icon-btn" :class="{ off: !spellOn() }" title="Проверка орфографии"
+              aria-label="Проверка орфографии" aria-haspopup="menu" :aria-expanded="langMenu" data-test="spell-lang"
+              @mousedown.prevent @click="langMenu = !langMenu; spellMenu = null">
+        <SpellCheck :size="15" />
+      </button>
+      <div v-if="langMenu" class="menu down" role="menu" data-test="spell-lang-menu" @keydown.esc="closeMenus">
+        <template v-if="engine === 'hunspell'">
+          <button v-if="spellDictionaries().length > 1" type="button" role="menuitemradio"
+                  :aria-checked="state.prefs.spell === '' || (state.prefs.spell !== 'off' && !spellDictionaries().includes(state.prefs.spell))"
+                  @click="setSpell('')">
+            <Check :size="14" class="tick" />Все словари
+          </button>
+          <button v-for="d in spellDictionaries()" :key="d" type="button" role="menuitemradio" :data-dict="d"
+                  :aria-checked="state.prefs.spell === d || (spellDictionaries().length === 1 && state.prefs.spell === '')"
+                  @click="setSpell(d)">
+            <Check :size="14" class="tick" />{{ dictionaryName(d) }}
+          </button>
+        </template>
+        <button v-else type="button" role="menuitemradio" :aria-checked="state.prefs.spell !== 'off'" @click="setSpell('')">
+          <Check :size="14" class="tick" />Проверять орфографию
+        </button>
+        <button type="button" role="menuitemradio" :aria-checked="state.prefs.spell === 'off'" @click="setSpell('off')">
+          <Check :size="14" class="tick" />Не проверять
+        </button>
+      </div>
+    </div>
+  </div>
+  <div v-if="spellMenu" ref="spellMenuEl" class="menu" role="menu" :style="{ left: `${spellMenu.x}px`, top: `${spellMenu.y}px` }"
+       data-test="spell-menu" @keydown.esc="closeMenus(); editor?.commands.focus()">
+    <button v-for="s in spellMenu.w.suggestions" :key="s" type="button" role="menuitem" class="sugg" @click="replaceWord(s)">{{ s }}</button>
+    <div v-if="!spellMenu.w.suggestions.length" class="none">Нет вариантов</div>
+    <hr />
+    <button type="button" role="menuitem" data-test="spell-add" @click="spellAction(addToDictionary)">Добавить в словарь</button>
+    <button type="button" role="menuitem" @click="spellAction(ignoreWord)">Пропустить</button>
   </div>
   <input ref="picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
          data-test="inline-image" @change="pickImages" />
@@ -162,6 +258,22 @@ defineExpose({
 .editor-host :deep(.rich a) { color: var(--accent); }
 .editor-host :deep(.rich img) { max-width: 100%; height: auto; border-radius: 4px; }
 .editor-host :deep(.rich img.ProseMirror-selectednode) { outline: 2px solid var(--accent); }
+.editor-host :deep(.spell-error) {
+  text-decoration: underline wavy var(--danger); text-decoration-skip-ink: none; text-underline-offset: 3px;
+}
+.lang { position: relative; margin-left: auto; }
+.tools .icon-btn.off { color: var(--text-3); }
+.menu { position: fixed; z-index: 60; min-width: 180px; padding: 4px; background: var(--pane);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); display: grid; }
+.menu.down { position: absolute; right: 0; top: calc(100% + 4px); }
+.menu button { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: none; text-align: left; color: var(--text); white-space: nowrap; }
+.menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
+.menu .sugg { font-weight: 600; }
+.menu .tick { visibility: hidden; color: var(--accent); }
+.menu [aria-checked="true"] .tick { visibility: visible; }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+.menu .none { padding: 6px 10px; color: var(--text-3); font-size: 13px; }
 .editor-host :deep(.rich p.is-editor-empty:first-child::before) {
   content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: var(--text-3);
 }

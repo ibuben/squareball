@@ -548,6 +548,45 @@ try {
   await mf.waitFor({ state: 'detached' })
   step('mbox: два письма загружены в папку и скачаны обратно')
 
+  // Орфография (на стенде engine: hunspell): подчёркивание, исправление, личный словарь, смена словаря.
+  const spellOn = (await (await page.request.get(`${BASE}/api/v1/auth/me`)).json()).features.spellcheck.engine
+  if (spellOn === 'hunspell') {
+    await page.locator('.folders').getByRole('button', { name: 'Новое письмо' }).click()
+    const sdlg = page.getByRole('dialog').last()
+    await sdlg.locator('.ProseMirror').click()
+    await page.keyboard.type('Превет, как дела? Сквербол ')
+    const errs = sdlg.locator('.ProseMirror .spell-error')
+    // waitForFunction запрещён CSP страницы — опрашиваем через локатор.
+    const waitErrs = async (ok, what) => {
+      for (let i = 0; i < 50; i++) { if (ok(await errs.count())) return; await page.waitForTimeout(200) }
+      throw new Error(`орфография: ${what}, подчёркнуто ${await errs.count()}`)
+    }
+    await waitErrs((n) => n === 2, 'ожидалось 2 ошибки')
+    await shot('21-spell-errors')
+    await errs.filter({ hasText: 'Превет' }).click({ button: 'right' })
+    await page.locator('[data-test=spell-menu]').getByRole('menuitem', { name: 'Привет', exact: true }).click()
+    await waitErrs((n) => n === 1, 'после исправления')
+    if (!(await sdlg.locator('.ProseMirror').innerText()).startsWith('Привет, как дела?')) throw new Error('исправление не применилось')
+    await errs.filter({ hasText: 'Сквербол' }).click({ button: 'right' })
+    await page.locator('[data-test=spell-add]').click()
+    await waitErrs((n) => n === 0, 'ожидалось 0')
+    // Только английский словарь: русские слова становятся ошибками.
+    await sdlg.locator('[data-test=spell-lang]').click()
+    await page.locator('[data-test=spell-lang-menu] [data-dict=en_US]').click()
+    await waitErrs((n) => n >= 3, 'только en_US')
+    await sdlg.locator('[data-test=spell-lang]').click()
+    await page.locator('[data-test=spell-lang-menu]').getByRole('menuitemradio', { name: 'Все словари' }).click()
+    await waitErrs((n) => n === 0, 'ожидалось 0')
+    await sdlg.getByTitle('Удалить черновик').click()
+    // Слово убираем из личного словаря через настройки.
+    await page.getByRole('button', { name: 'Настройки' }).first().click()
+    await page.locator('.nav .item', { hasText: 'Орфография' }).click()
+    await page.locator('[data-test=spell-word]', { hasText: 'Сквербол' }).getByRole('button').click()
+    await page.locator('[data-test=spell-word]', { hasText: 'Сквербол' }).waitFor({ state: 'detached' })
+    await page.getByRole('button', { name: 'Почта' }).first().click()
+    step('орфография: ошибки подчёркнуты, исправлены, слово в личном словаре, смена словаря')
+  }
+
   await page.getByRole('button', { name: 'Настройки' }).first().click()
   await page.locator('.nav .item', { hasText: 'Шаблоны ответов' }).click()
   page.once('dialog', (d) => d.accept())
