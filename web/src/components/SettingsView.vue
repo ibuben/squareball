@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Filter, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
+import { Filter, FolderTree, Forward, KeyRound, Palmtree, Palette, UserRound } from 'lucide-vue-next'
 import { applyTheme, state } from '../store'
 import IdentitiesSettings from './settings/IdentitiesSettings.vue'
 import FiltersSettings from './settings/FiltersSettings.vue'
 import VacationSettings from './settings/VacationSettings.vue'
 import PasswordSettings from './settings/PasswordSettings.vue'
+import FoldersSettings from './settings/FoldersSettings.vue'
 
-type Section = 'identities' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
+type Section = 'identities' | 'folders' | 'filters' | 'vacation' | 'forward' | 'password' | 'appearance'
 const sections: { id: Section; label: string; icon: unknown; sieve?: boolean; password?: boolean }[] = [
   { id: 'identities', label: 'Отправители и подписи', icon: UserRound },
+  { id: 'folders', label: 'Папки', icon: FolderTree },
   { id: 'filters', label: 'Фильтры', icon: Filter, sieve: true },
   { id: 'vacation', label: 'Автоответ', icon: Palmtree, sieve: true },
   { id: 'forward', label: 'Пересылка', icon: Forward, sieve: true },
@@ -35,6 +37,7 @@ function setTheme(th: 'light' | 'dark' | 'system') { state.theme = th; applyThem
     </nav>
     <div class="content scroll">
       <IdentitiesSettings v-if="current === 'identities'" />
+      <FoldersSettings v-else-if="current === 'folders'" />
       <FiltersSettings v-else-if="current === 'filters'" />
       <VacationSettings v-else-if="current === 'vacation'" kind="vacation" />
       <VacationSettings v-else-if="current === 'forward'" kind="forward" />

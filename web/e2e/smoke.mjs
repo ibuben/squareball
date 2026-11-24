@@ -320,6 +320,39 @@ try {
   await page.locator('.src', { hasText: groupName }).waitFor({ state: 'detached' })
   await page.getByRole('button', { name: 'Почта' }).first().click()
 
+  // Папки: создать, подпапка, переименовать с подпапкой, отписка в настройках, удалить.
+  const fname = `e2e папка ${stamp}`
+  const pane = page.locator('nav.folders')
+  page.once('dialog', (d) => d.accept(fname))
+  await page.locator('[data-test=folder-new]').click()
+  await pane.locator('.folder', { hasText: fname }).waitFor()
+  await pane.locator('.folder', { hasText: fname }).click({ button: 'right' })
+  page.once('dialog', (d) => d.accept('Вложенная'))
+  await page.locator('[data-test=folder-menu]').getByRole('menuitem', { name: 'Новая подпапка' }).click()
+  await pane.locator('.folder', { hasText: 'Вложенная' }).waitFor()
+  await pane.locator('.folder', { hasText: fname }).click({ button: 'right' })
+  await shot('12-folder-menu')
+  page.once('dialog', (d) => d.accept(fname + ' new'))
+  await page.locator('[data-test=folder-menu]').getByRole('menuitem', { name: 'Переименовать' }).click()
+  await pane.locator(`.folder[data-folder="${fname} new/Вложенная"]`).waitFor()
+  step('папка и подпапка созданы, переименование перенесло подпапку')
+
+  await page.getByRole('button', { name: 'Настройки' }).first().click()
+  await page.locator('.nav .item', { hasText: 'Папки' }).click()
+  const subRow = page.locator(`.row[data-folder="${fname} new/Вложенная"]`)
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/v1/folders/subscribe')),
+    subRow.locator('input[type=checkbox]').uncheck(),
+  ])
+  await shot('13-settings-folders')
+  await page.getByRole('button', { name: 'Почта' }).first().click()
+  if (await pane.locator('.folder', { hasText: 'Вложенная' }).count()) throw new Error('отписанная папка видна в списке')
+  await pane.locator('.folder', { hasText: fname + ' new' }).click({ button: 'right' })
+  page.once('dialog', (d) => d.accept())
+  await page.locator('[data-test=folder-menu]').getByRole('menuitem', { name: 'Удалить папку' }).click()
+  await pane.locator('.folder', { hasText: fname }).waitFor({ state: 'detached' })
+  step('отписанная папка скрыта; папка с подпапкой удалена')
+
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/v1/messages?folder=INBOX')),
     page.locator('.folder', { hasText: 'Входящие' }).click(),

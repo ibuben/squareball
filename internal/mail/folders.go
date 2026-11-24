@@ -29,6 +29,7 @@ type Folder struct {
 	Selectable bool   `json:"selectable"`
 	Total      uint32 `json:"total"`
 	Unread     uint32 `json:"unread"`
+	Subscribed bool   `json:"subscribed"`
 }
 
 // ListFolders возвращает подписанные и существующие папки с ролями и счётчиками.
@@ -42,6 +43,10 @@ func ListFolders(c *imapclient.Client, detect string, fallback map[string]string
 	if c.Caps().Has(imap.CapSpecialUse) {
 		opts.ReturnSpecialUse = true
 	}
+	// Подписки: LIST-EXTENDED отдаёт \Subscribed в том же ответе.
+	// Без него считаем подписанными все папки — показываем всё, как раньше.
+	knowSubs := c.Caps().Has(imap.CapListExtended) || c.Caps().Has(imap.CapIMAP4rev2)
+	opts.ReturnSubscribed = knowSubs
 	list, err := c.List("", "*", opts).Collect()
 	if err != nil {
 		return nil, err
@@ -55,7 +60,7 @@ func ListFolders(c *imapclient.Client, detect string, fallback map[string]string
 	taken := map[string]bool{}
 	folders := make([]Folder, 0, len(list))
 	for _, l := range list {
-		f := Folder{Name: l.Mailbox, Selectable: true}
+		f := Folder{Name: l.Mailbox, Selectable: true, Subscribed: !knowSubs}
 		if l.Delim != 0 {
 			f.Delimiter = string(l.Delim)
 			parts := strings.Split(l.Mailbox, f.Delimiter)
@@ -68,6 +73,8 @@ func ListFolders(c *imapclient.Client, detect string, fallback map[string]string
 			switch a {
 			case imap.MailboxAttrNoSelect, imap.MailboxAttrNonExistent:
 				f.Selectable = false
+			case imap.MailboxAttrSubscribed:
+				f.Subscribed = true
 			}
 			if detect == "special_use" && f.Role == "" {
 				f.Role = roleFromAttr(a)
@@ -75,6 +82,7 @@ func ListFolders(c *imapclient.Client, detect string, fallback map[string]string
 		}
 		if strings.EqualFold(l.Mailbox, "INBOX") {
 			f.Role = RoleInbox
+			f.Subscribed = true
 		}
 		if l.Status != nil {
 			if l.Status.NumMessages != nil {

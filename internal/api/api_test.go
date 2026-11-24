@@ -528,3 +528,110 @@ func TestIntegrationPassword(t *testing.T) {
 		t.Fatalf("other session survived: %d", st)
 	}
 }
+
+func folderNames(body map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	list, _ := body["folders"].([]any)
+	for _, x := range list {
+		f := x.(map[string]any)
+		out[f["name"].(string)] = f
+	}
+	return out
+}
+
+func TestIntegrationFolders(t *testing.T) {
+	if os.Getenv("WEBMAIL_IT") != "1" {
+		t.Skip("set WEBMAIL_IT=1 with deploy/devstand running")
+	}
+	s := newServer(t, testConfig(t))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &client{t: t, base: ts.URL, hc: &http.Client{Jar: jar}}
+	st, me := c.do("POST", "/api/v1/auth/login", map[string]string{"username": "bob", "password": "Test12345!"})
+	if st != 200 {
+		t.Fatalf("login: %d %v", st, me)
+	}
+	c.csrf = me["csrf"].(string)
+	// Остатки прошлых прогонов.
+	for _, n := range []string{"ИТ-тест", "ИТ-проект", "Прочее/ИТ-проект"} {
+		c.do("POST", "/api/v1/folders/delete", map[string]string{"name": n})
+	}
+
+	st, body := c.do("POST", "/api/v1/folders", map[string]string{"name": "ИТ-тест"})
+	if st != 200 || body["name"] != "ИТ-тест" || folderNames(body)["ИТ-тест"] == nil {
+		t.Fatalf("create: %d %v", st, body)
+	}
+	if f := folderNames(body)["ИТ-тест"]; f["subscribed"] != true {
+		t.Errorf("new folder not subscribed: %v", f)
+	}
+	if st, body := c.do("POST", "/api/v1/folders", map[string]string{"name": "ИТ-тест"}); st != 409 || body["error"] != "folder.exists" {
+		t.Errorf("duplicate: %d %v", st, body)
+	}
+	for _, bad := range []string{"a/b", " x", "*", "INBOX", ""} {
+		if st, body := c.do("POST", "/api/v1/folders", map[string]string{"name": bad}); st != 400 {
+			t.Errorf("bad name %q: %d %v", bad, st, body)
+		}
+	}
+	st, body = c.do("POST", "/api/v1/folders", map[string]string{"parent": "ИТ-тест", "name": "Вложенная"})
+	if st != 200 || body["name"] != "ИТ-тест/Вложенная" {
+		t.Fatalf("create child: %d %v", st, body)
+	}
+	// Нельзя перенести в собственную подпапку; спецпапки не трогаются.
+	if st, _ := c.do("POST", "/api/v1/folders/rename", map[string]string{"name": "ИТ-тест", "parent": "ИТ-тест/Вложенная", "new_name": "X"}); st != 400 {
+		t.Errorf("move into own child: %d", st)
+	}
+	for _, path := range []string{"/api/v1/folders/rename", "/api/v1/folders/delete"} {
+		if st, body := c.do("POST", path, map[string]string{"name": "Trash", "new_name": "Bin"}); st != 403 || body["error"] != "folder.protected" {
+			t.Errorf("%s Trash: %d %v", path, st, body)
+		}
+	}
+	st, body = c.do("POST", "/api/v1/folders/rename", map[string]string{"name": "ИТ-тест", "new_name": "ИТ-проект"})
+	fs := folderNames(body)
+	if st != 200 || fs["ИТ-проект/Вложенная"] == nil || fs["ИТ-тест"] != nil || fs["ИТ-проект/Вложенная"]["subscribed"] != true {
+		t.Fatalf("rename: %d %v", st, body)
+	}
+	if st, body := c.do("POST", "/api/v1/folders/subscribe", map[string]any{"name": "ИТ-проект/Вложенная", "subscribed": false}); st != 200 || folderNames(body)["ИТ-проект/Вложенная"]["subscribed"] != false {
+		t.Errorf("unsubscribe: %d %v", st, body)
+	}
+	if st, _ := c.do("POST", "/api/v1/folders/subscribe", map[string]any{"name": "INBOX", "subscribed": false}); st != 403 {
+		t.Errorf("unsubscribe INBOX: %d", st)
+	}
+
+	// Письмо в папку: черновик и перенос, затем «прочитать всё» и очистка Корзины.
+	st, d := c.multipart("/api/v1/drafts", `{"subject":"folder test","text":"x"}`, nil)
+	if st != 200 {
+		t.Fatalf("draft: %d %v", st, d)
+	}
+	ref := d["draft_ref"].(map[string]any)
+	if st, b := c.do("POST", "/api/v1/messages/flags", map[string]any{"folder": ref["folder"], "uids": []any{ref["uid"]}, "flags": []string{`\Seen`}, "add": false}); st != 200 {
+		t.Fatalf("unseen: %d %v", st, b)
+	}
+	if st, b := c.do("POST", "/api/v1/messages/move", map[string]any{"folder": ref["folder"], "uids": []any{ref["uid"]}, "dest": "ИТ-проект"}); st != 200 {
+		t.Fatalf("move: %d %v", st, b)
+	}
+	if st, body := c.do("POST", "/api/v1/folders/read", map[string]string{"name": "ИТ-проект"}); st != 200 || folderNames(body)["ИТ-проект"]["unread"] != float64(0) {
+		t.Errorf("read all: %d %v", st, folderNames(body)["ИТ-проект"])
+	}
+	if st, _ := c.do("POST", "/api/v1/folders/empty", map[string]string{"name": "ИТ-проект"}); st != 403 {
+		t.Errorf("empty ordinary folder: %d", st)
+	}
+	// Перенос в другую папку верхнего уровня.
+	c.do("POST", "/api/v1/folders", map[string]string{"name": "Прочее"})
+	st, body = c.do("POST", "/api/v1/folders/rename", map[string]string{"name": "ИТ-проект", "parent": "Прочее", "new_name": "ИТ-проект"})
+	if st != 200 || folderNames(body)["Прочее/ИТ-проект/Вложенная"] == nil {
+		t.Fatalf("move folder: %d %v", st, body)
+	}
+	st, body = c.do("POST", "/api/v1/folders/delete", map[string]string{"name": "Прочее"})
+	for name := range folderNames(body) {
+		if strings.HasPrefix(name, "Прочее") {
+			t.Errorf("delete left %s", name)
+		}
+	}
+	if st != 200 {
+		t.Fatalf("delete: %d %v", st, body)
+	}
+	if st, body := c.do("POST", "/api/v1/folders/empty", map[string]string{"name": "Trash"}); st != 200 || folderNames(body)["Trash"]["total"] != float64(0) {
+		t.Errorf("empty trash: %d %v", st, body)
+	}
+}

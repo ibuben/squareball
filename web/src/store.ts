@@ -102,6 +102,99 @@ export async function loadFolders() {
   } catch (e) { reportError(e) }
 }
 
+// --- управление папками -------------------------------------------------------
+
+const folderErrors: Record<string, string> = {
+  'folder.name': 'Недопустимое имя папки: без «/», «*», «%» и пробелов по краям',
+  'folder.exists': 'Папка с таким именем уже есть',
+  'folder.protected': 'Системные папки нельзя переименовать или удалить',
+  'mail.not_found': 'Папка не найдена — список обновлён',
+}
+
+function folderError(e: unknown) {
+  if (e instanceof ApiError && folderErrors[e.code]) {
+    toast(folderErrors[e.code])
+    if (e.code === 'mail.not_found') void loadFolders()
+  } else reportError(e)
+}
+
+// Родитель папки по имени ('' — верхний уровень).
+export function folderParent(f: Folder): string {
+  if (!f.delimiter || f.depth === 0) return ''
+  return f.name.slice(0, f.name.length - f.display.length - f.delimiter.length)
+}
+
+// Папки, видимые в панели: подписанные, спецпапки и родители подписанных.
+export function visibleFolders(): Folder[] {
+  const shown = new Set<string>()
+  for (const f of state.folders) {
+    if (!f.subscribed && !f.role) continue
+    shown.add(f.name)
+    let p = folderParent(f)
+    while (p) {
+      shown.add(p)
+      const pf = state.folders.find((x) => x.name === p)
+      p = pf ? folderParent(pf) : ''
+    }
+  }
+  return state.folders.filter((f) => shown.has(f.name))
+}
+
+// Если открытая папка исчезла (переименована, удалена) — переходим в new или во Входящие.
+function afterFolders(folders: Folder[], renamedFrom = '', renamedTo = '') {
+  state.folders = folders
+  const cur = state.folder
+  if (renamedFrom && (cur === renamedFrom || cur.startsWith(renamedFrom + (folders[0]?.delimiter || '/')))) {
+    state.folder = renamedTo + cur.slice(renamedFrom.length)
+  } else if (!folders.some((f) => f.name === cur)) {
+    void openFolder('INBOX')
+  }
+}
+
+export async function createFolder(parent: string, name: string): Promise<boolean> {
+  try {
+    const r = await api.createFolder(parent, name.trim())
+    afterFolders(r.folders)
+    toast(`Папка «${name.trim()}» создана`)
+    return true
+  } catch (e) { folderError(e); return false }
+}
+
+export async function renameFolder(f: Folder, parent: string, name: string): Promise<boolean> {
+  try {
+    const r = await api.renameFolder(f.name, parent, name.trim())
+    afterFolders(r.folders, f.name, r.name)
+    return true
+  } catch (e) { folderError(e); return false }
+}
+
+export async function deleteFolder(f: Folder): Promise<boolean> {
+  try {
+    afterFolders((await api.deleteFolder(f.name)).folders)
+    toast(`Папка «${f.display}» удалена`)
+    return true
+  } catch (e) { folderError(e); return false }
+}
+
+export async function subscribeFolder(f: Folder, on: boolean) {
+  try { afterFolders((await api.subscribeFolder(f.name, on)).folders) } catch (e) { folderError(e) }
+}
+
+export async function emptyFolder(f: Folder) {
+  try {
+    afterFolders((await api.emptyFolder(f.name)).folders)
+    if (state.folder === f.name) void openFolder(f.name)
+    toast(`Папка «${folderTitle(f)}» очищена`)
+  } catch (e) { folderError(e) }
+}
+
+export async function readFolder(f: Folder) {
+  try {
+    afterFolders((await api.readFolder(f.name)).folders)
+    if (state.folder === f.name) for (const m of state.messages) m.seen = true
+  } catch (e) { folderError(e) }
+}
+
 export async function loadList(append = false) {
   state.loadingList = true
   try {

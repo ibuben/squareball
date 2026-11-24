@@ -41,6 +41,7 @@ func (s *Server) routes(static http.Handler) {
 	m.HandleFunc("GET /api/v1/sieve", s.authed(s.handleGetSieve))
 	m.HandleFunc("PUT /api/v1/sieve", s.authed(s.handlePutSieve))
 	s.contactRoutes()
+	s.folderRoutes()
 	m.HandleFunc("GET /api/v1/identities", s.authed(s.handleIdentities))
 	m.HandleFunc("POST /api/v1/identities", s.authed(s.handleSaveIdentity))
 	m.HandleFunc("POST /api/v1/identities/delete", s.authed(s.handleDeleteIdentity))

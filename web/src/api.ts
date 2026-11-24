@@ -12,7 +12,7 @@ export interface Me {
 }
 export interface Folder {
   name: string; display: string; delimiter: string; depth: number
-  role?: string; selectable: boolean; total: number; unread: number
+  role?: string; selectable: boolean; total: number; unread: number; subscribed: boolean
 }
 export interface Summary {
   uid: number; from: Address[]; to: Address[]; subject: string; date: string; size: number
@@ -102,6 +102,15 @@ export const api = {
   login: (username: string, password: string) => request<Me>('POST', '/api/v1/auth/login', { username, password }),
   logout: () => request('POST', '/api/v1/auth/logout'),
   folders: () => request<{ folders: Folder[] }>('GET', '/api/v1/folders'),
+  createFolder: (parent: string, name: string) =>
+    request<{ folders: Folder[]; name: string }>('POST', '/api/v1/folders', { parent, name }),
+  renameFolder: (name: string, parent: string, new_name: string) =>
+    request<{ folders: Folder[]; name: string }>('POST', '/api/v1/folders/rename', { name, parent, new_name }),
+  deleteFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/delete', { name }),
+  subscribeFolder: (name: string, subscribed: boolean) =>
+    request<{ folders: Folder[] }>('POST', '/api/v1/folders/subscribe', { name, subscribed }),
+  emptyFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/empty', { name }),
+  readFolder: (name: string) => request<{ folders: Folder[] }>('POST', '/api/v1/folders/read', { name }),
   messages: (folder: string, offset = 0, limit = 50, text = '', filter = '') =>
     request<Page>('GET', `/api/v1/messages?${q_({ folder, offset, limit, q: text, filter })}`),
   message: (folder: string, uid: number, images = false, peek = false) =>

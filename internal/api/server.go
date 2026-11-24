@@ -299,6 +299,12 @@ func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, http.StatusUnauthorized, "auth.expired", "")
 	case errors.Is(err, mail.ErrNoDrafts):
 		writeErr(w, http.StatusConflict, "mail.no_drafts_folder", "")
+	case errors.Is(err, mail.ErrFolderName):
+		writeErr(w, http.StatusBadRequest, "folder.name", "")
+	case errors.Is(err, mail.ErrFolderExists):
+		writeErr(w, http.StatusConflict, "folder.exists", "")
+	case errors.Is(err, mail.ErrFolderProtected):
+		writeErr(w, http.StatusForbidden, "folder.protected", "")
 	case errors.Is(err, mail.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "mail.not_found", "")
 	case errors.As(err, &ie):
